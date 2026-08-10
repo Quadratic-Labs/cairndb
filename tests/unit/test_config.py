@@ -2,8 +2,8 @@
 
 import pytest
 
-from cairndb.storage.config import StorageConfig
 from cairndb.client.config import ClientConfig
+from cairndb.storage.config import StorageConfig
 
 
 class TestStorageConfig:

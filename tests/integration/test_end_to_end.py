@@ -12,8 +12,6 @@ Scenario (from the refactor plan):
 import asyncio
 import random
 
-import pytest
-
 from cairndb.client.projector import Projector
 from cairndb.client.registry import HandlerRegistry
 from cairndb.client.replay import ReplayEngine
@@ -21,8 +19,7 @@ from cairndb.committer import Committer, CommitterConfig
 from cairndb.core.log import Commit
 from cairndb.core.types import SequenceNumber
 from cairndb.storage.filesystem import FilesystemStorage
-
-from tests.conftest import init_users_projection, make_event
+from tests.conftest import make_event
 
 N_WRITERS = 3
 N_EVENTS = 30  # per writer

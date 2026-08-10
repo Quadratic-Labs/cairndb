@@ -1,9 +1,7 @@
 """Blob storage abstraction for CairnDB."""
 
-from cairndb.storage.base import BlobStorage, StoredObject
 from cairndb.core.exceptions import ConfigurationError
-
-
+from cairndb.storage.base import BlobStorage, StoredObject
 
 
 def create_storage(storage_type: str, **kwargs) -> BlobStorage:
@@ -44,6 +42,6 @@ def create_storage(storage_type: str, **kwargs) -> BlobStorage:
     raise ConfigurationError(f"Unknown storage type: '{storage_type}'")
 
 
-from cairndb.storage.config import StorageConfig  # noqa: E402  (avoids import cycle)
+from cairndb.storage.config import StorageConfig
 
 __all__ = ["BlobStorage", "StorageConfig", "StoredObject", "create_storage"]

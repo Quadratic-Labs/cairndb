@@ -1,11 +1,11 @@
 """Tests for filesystem utilities."""
 
-import pytest
 import tempfile
 from pathlib import Path
-import os
 
-from cairndb.utils.filesystem import copy_database, atomic_swap, get_file_mtime, ensure_directory
+import pytest
+
+from cairndb.utils.filesystem import atomic_swap, copy_database, ensure_directory, get_file_mtime
 
 
 class TestCopyDatabase:

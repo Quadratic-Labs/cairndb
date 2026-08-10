@@ -1,11 +1,9 @@
 """Integration tests for the replay engine and projector."""
 
-import pytest
 
 from cairndb.client.projector import Projector
 from cairndb.client.replay import ReplayEngine
 from cairndb.core.types import SequenceNumber
-
 from tests.conftest import (
     commit_events,
     init_users_projection,

@@ -1,18 +1,17 @@
 """Unit tests for CairnDBClient connection provider."""
 
+import asyncio
 import os
-import time
 import tempfile
-
-import pytest
-import aiosqlite
 from pathlib import Path
+
+import aiosqlite
+import pytest
 from sqlalchemy import text
 
 from cairndb.client.config import ClientConfig
-from cairndb.client.registry import HandlerRegistry
 from cairndb.client.connection import CairnDBClient, _create_storage
-
+from cairndb.client.registry import HandlerRegistry
 
 # ---------------------------------------------------------------------------
 # _create_storage factory
@@ -152,7 +151,7 @@ async def test_reconnect_on_mtime_change():
         assert client._engine is first_engine
 
         # Touch file to change mtime
-        time.sleep(0.05)
+        await asyncio.sleep(0.05)
         os.utime(db_path)
 
         # Third call – detects mtime change, reconnects
@@ -235,7 +234,7 @@ async def test_get_session_raises_when_no_db():
         client = CairnDBClient(config, registry)
 
         with pytest.raises(FileNotFoundError):
-            async with client.get_session() as session:
+            async with client.get_session():
                 pass  # pragma: no cover
 
 

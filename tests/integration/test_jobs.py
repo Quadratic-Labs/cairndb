@@ -6,7 +6,6 @@ from cairndb.client.projector import Projector
 from cairndb.core.exceptions import ReplayError
 from cairndb.jobs.gc import collect_garbage
 from cairndb.jobs.snapshot import SnapshotBuilder
-
 from tests.conftest import (
     commit_events,
     init_users_projection,

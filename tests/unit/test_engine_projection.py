@@ -1,12 +1,10 @@
 """Unit tests for the projection facade (root and named logs)."""
 
+import aiosqlite
 import pytest
 
 from cairndb import CairnDB
-
 from tests.conftest import USERS_DDL, make_event
-
-import aiosqlite
 
 
 async def init_users(db_path: str) -> None:
@@ -57,9 +55,8 @@ async def test_projection_is_read_only(db, temp_dir):
 
     import sqlite3
 
-    with proj.connect() as conn:
-        with pytest.raises(sqlite3.OperationalError):
-            conn.execute("INSERT INTO users (id, name) VALUES (2, 'x')")
+    with proj.connect() as conn, pytest.raises(sqlite3.OperationalError):
+        conn.execute("INSERT INTO users (id, name) VALUES (2, 'x')")
     await db.close()
 
 

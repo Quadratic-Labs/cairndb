@@ -3,9 +3,8 @@
 import threading
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 import botocore.exceptions
+import pytest
 from azure.core import MatchConditions
 from azure.core.exceptions import (
     ResourceExistsError,
@@ -18,7 +17,6 @@ from google.api_core.exceptions import PreconditionFailed as GCSPreconditionFail
 from cairndb.core.exceptions import StorageError
 from cairndb.storage import StoredObject
 from cairndb.storage.filesystem import FilesystemStorage
-
 
 # ---------------------------------------------------------------------------
 # Filesystem — the real-semantics backend

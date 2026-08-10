@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import NewType
 
 _SEQUENCE_RE = re.compile(r"^(\d{12}):(\d{6})$")
@@ -31,7 +31,7 @@ class SequenceNumber:
             raise ValueError(f"index must be >= 0, got {self.index}")
 
     @classmethod
-    def from_string(cls, s: str) -> "SequenceNumber":
+    def from_string(cls, s: str) -> SequenceNumber:
         """Parse from the canonical '{commit:012d}:{index:06d}' form."""
         match = _SEQUENCE_RE.match(s)
         if not match:
@@ -63,23 +63,23 @@ class Timestamp:
     value: datetime
 
     @classmethod
-    def now(cls) -> "Timestamp":
+    def now(cls) -> Timestamp:
         """Get current UTC timestamp."""
-        return cls(datetime.now(timezone.utc))
+        return cls(datetime.now(UTC))
 
     @classmethod
-    def from_datetime(cls, dt: datetime) -> "Timestamp":
+    def from_datetime(cls, dt: datetime) -> Timestamp:
         """Create from datetime, converting to UTC if needed."""
         if dt.tzinfo is None:
             # Assume UTC if no timezone specified
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         else:
             # Convert to UTC
-            dt = dt.astimezone(timezone.utc)
+            dt = dt.astimezone(UTC)
         return cls(dt)
 
     @classmethod
-    def from_iso(cls, iso_string: str) -> "Timestamp":
+    def from_iso(cls, iso_string: str) -> Timestamp:
         """Parse from ISO 8601 format string."""
         dt = datetime.fromisoformat(iso_string)
         return cls.from_datetime(dt)

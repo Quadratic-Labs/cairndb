@@ -31,7 +31,7 @@ Transactions serialize on the ``_tx`` log: a few tens of tx/s at most.
 """
 
 import asyncio
-from typing import Any, Optional
+from typing import Any, Self
 
 import structlog
 
@@ -39,10 +39,9 @@ from cairndb.committer import CommitterConfig
 from cairndb.core.exceptions import EventRejectedError, TransactionConflict
 from cairndb.core.log import Commit, Event
 from cairndb.core.types import EventType, SchemaVersion, SequenceNumber, Timestamp
-from cairndb.storage.base import BlobStorage
-
 from cairndb.engine.logs import Log
 from cairndb.engine.objects import check_key
+from cairndb.storage.base import BlobStorage
 
 logger = structlog.get_logger(__name__)
 
@@ -70,7 +69,7 @@ class Transaction:
     an exception (or never entering) discards the staged operations.
     """
 
-    def __init__(self, manager: "TransactionManager"):
+    def __init__(self, manager: TransactionManager):
         self._manager = manager
         self._reads: dict[str, str | None] = {}  # key -> etag observed (None = absent)
         self._ops: list[dict[str, Any]] = []
@@ -79,7 +78,7 @@ class Transaction:
         self._begin_tail: int | None = None
         self.sequence: SequenceNumber | None = None  # set after commit
 
-    async def __aenter__(self) -> "Transaction":
+    async def __aenter__(self) -> Self:
         self._begin_tail = await self._manager.log.current_tail()
         return self
 
@@ -233,7 +232,7 @@ class TransactionManager:
 
     async def _revalidate(
         self, events: list[Event], interleaved: list[Commit]
-    ) -> list[Optional[Event]]:
+    ) -> list[Event | None]:
         """Committer hook: reject pending tx records that lost a race to a
         conflicting record."""
         interleaved_writes: set[str] = set()
@@ -241,7 +240,7 @@ class TransactionManager:
             for event in commit.events:
                 interleaved_writes |= _write_set(event)
 
-        decisions: list[Optional[Event]] = []
+        decisions: list[Event | None] = []
         for event in events:
             reads = self._pending_reads.get(id(event), set(event.payload.get("reads", {})))
             decisions.append(None if reads & interleaved_writes else event)

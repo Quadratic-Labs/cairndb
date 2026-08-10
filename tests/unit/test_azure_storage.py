@@ -1,8 +1,8 @@
 """Unit tests for Azure Blob Storage backend."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
 from cairndb.core.exceptions import StorageError

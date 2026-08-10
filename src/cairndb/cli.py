@@ -13,7 +13,6 @@ Designed to run as scheduled serverless jobs (container entrypoint).
 import asyncio
 import importlib
 import sys
-from typing import Optional
 
 try:
     import typer
@@ -62,14 +61,14 @@ def snapshot(
         ...,
         help="HandlerRegistry reference, e.g. 'myapp.projections:registry'",
     ),
-    init_schema: Optional[str] = typer.Option(
+    init_schema: str | None = typer.Option(
         None,
         help="Schema initializer reference (async callable taking a db path)",
     ),
     schema_version: str = typer.Option(
         "1.0.0", help="Projection schema version (snapshots/v{version}/ prefix)"
     ),
-    end_at: Optional[int] = typer.Option(
+    end_at: int | None = typer.Option(
         None, help="Last commit to include (point-in-time snapshot)"
     ),
 ) -> None:
@@ -125,7 +124,7 @@ def rebuild(
         ...,
         help="HandlerRegistry reference, e.g. 'myapp.projections:registry'",
     ),
-    init_schema: Optional[str] = typer.Option(
+    init_schema: str | None = typer.Option(
         None, help="Schema initializer reference"
     ),
 ) -> None:

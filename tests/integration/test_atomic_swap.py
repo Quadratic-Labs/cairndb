@@ -8,12 +8,10 @@ Verifies that:
 
 import asyncio
 
-import pytest
 from sqlalchemy import text
 
 from cairndb.client.connection import CairnDBClient
 from cairndb.client.projector import Projector
-
 from tests.conftest import (
     commit_events,
     init_users_projection,

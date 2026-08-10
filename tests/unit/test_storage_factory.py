@@ -1,11 +1,11 @@
 """Unit tests for the storage factory."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from cairndb.core.exceptions import ConfigurationError
 from cairndb.storage import create_storage
-
 
 # ------------------------------------------------------------------
 # Filesystem — no external mocks needed

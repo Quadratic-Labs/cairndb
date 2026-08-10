@@ -15,7 +15,7 @@ and keeps its original layout for backward compatibility.
 
 import asyncio
 import re
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from cairndb.committer import Committer, CommitterConfig, RevalidateHook
 from cairndb.core.log import Commit, Event, SequencedEvent

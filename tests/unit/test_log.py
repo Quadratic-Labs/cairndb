@@ -2,7 +2,7 @@
 
 import pytest
 
-from cairndb.core.log import Event, Commit
+from cairndb.core.log import Commit, Event
 from cairndb.core.types import EventType, SchemaVersion, SequenceNumber, Timestamp
 
 

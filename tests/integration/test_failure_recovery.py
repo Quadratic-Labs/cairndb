@@ -7,7 +7,6 @@ import pytest
 from cairndb.client.projector import Projector
 from cairndb.client.registry import HandlerRegistry
 from cairndb.core.exceptions import ReplayError
-
 from tests.conftest import (
     commit_events,
     init_users_projection,

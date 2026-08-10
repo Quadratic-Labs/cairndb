@@ -6,7 +6,6 @@ import pytest
 
 from cairndb import CairnDB
 from cairndb.storage.base import commit_key
-
 from tests.conftest import make_event
 
 

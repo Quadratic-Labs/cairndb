@@ -2,18 +2,19 @@
 
 import asyncio
 import os
-from typing import Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 import structlog
 
-from cairndb.core.types import SequenceNumber
-from cairndb.core.exceptions import ReplayError
-from cairndb.storage.base import BlobStorage
-from cairndb.client.registry import HandlerRegistry
-from cairndb.client.discovery import DiscoveryService
-from cairndb.client.replay import ReplayEngine
 from cairndb.client.config import ClientConfig
-from cairndb.utils.filesystem import copy_database, atomic_swap
+from cairndb.client.discovery import DiscoveryService
+from cairndb.client.registry import HandlerRegistry
+from cairndb.client.replay import ReplayEngine
+from cairndb.core.exceptions import ReplayError
+from cairndb.core.types import SequenceNumber
+from cairndb.storage.base import BlobStorage
+from cairndb.utils.filesystem import atomic_swap, copy_database
 
 logger = structlog.get_logger(__name__)
 
@@ -45,7 +46,7 @@ class Projector:
         config: ClientConfig,
         storage: BlobStorage,
         registry: HandlerRegistry,
-        init_schema: Optional[SchemaInitializer] = None,
+        init_schema: SchemaInitializer | None = None,
     ):
         """
         Initialize the projector.
@@ -176,8 +177,7 @@ class Projector:
             data = await self.storage.get_snapshot(
                 self.config.schema_version, snapshot_number
             )
-            with open(new_db_path, "wb") as f:
-                f.write(data)
+            await asyncio.to_thread(Path(new_db_path).write_bytes, data)
 
             logger.info(
                 "bootstrapped_from_snapshot",

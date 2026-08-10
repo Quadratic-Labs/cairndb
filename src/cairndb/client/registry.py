@@ -1,11 +1,12 @@
 """Event handler registration system."""
 
-from typing import Callable, Awaitable, Any
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 import structlog
 
-from cairndb.core.types import EventType
-from cairndb.core.log import SequencedEvent
 from cairndb.core.exceptions import HandlerNotFoundError
+from cairndb.core.log import SequencedEvent
 
 logger = structlog.get_logger(__name__)
 

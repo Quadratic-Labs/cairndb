@@ -6,12 +6,10 @@ pre-snapshot history. These tests pin the corrected behavior: a fresh
 client bootstraps from the snapshot *as its base*, then replays the tail.
 """
 
-import pytest
 
 from cairndb.client.projector import Projector
 from cairndb.client.replay import ReplayEngine
 from cairndb.core.types import SequenceNumber
-
 from tests.conftest import (
     commit_events,
     init_users_projection,
@@ -82,7 +80,7 @@ class TestSnapshotBootstrap:
         await init_users_projection(client_config.db_path)  # needed w/o snapshot
 
         projector = Projector(client_config, storage, user_registry)
-        updated, seq = await projector.apply_updates()
+        updated, _ = await projector.apply_updates()
 
         # Replayed from the log, not the foreign snapshot
         assert updated is True

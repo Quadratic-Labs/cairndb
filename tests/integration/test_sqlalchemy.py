@@ -9,7 +9,6 @@ from sqlalchemy.exc import OperationalError
 from cairndb.client.connection import CairnDBClient
 from cairndb.client.updater import BackgroundUpdater
 from cairndb.committer import Committer
-
 from tests.conftest import (
     commit_events,
     init_users_projection,

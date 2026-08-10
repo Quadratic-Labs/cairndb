@@ -127,7 +127,7 @@ class StorageConfig(BaseModel):
         return _factory(self.type, **kwargs)
 
     @classmethod
-    def from_env(cls) -> "StorageConfig":
+    def from_env(cls) -> StorageConfig:
         """Build configuration from ``CAIRNDB_*`` environment variables.
 
         Supported variables:

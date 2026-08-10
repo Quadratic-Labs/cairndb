@@ -13,7 +13,8 @@ weakening the durability guarantee.
 
 import asyncio
 from collections import deque
-from typing import Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Self
 
 import structlog
 from pydantic import BaseModel, Field
@@ -30,7 +31,7 @@ logger = structlog.get_logger(__name__)
 # place of pending[i] (possibly modified), or None to reject it. Rejected
 # events fail their append() with EventRejectedError.
 RevalidateHook = Callable[
-    [list[Event], list[Commit]], Awaitable[list[Optional[Event]]]
+    [list[Event], list[Commit]], Awaitable[list[Event | None]]
 ]
 
 
@@ -87,7 +88,7 @@ class _Pending:
 
     __slots__ = ("event", "future")
 
-    def __init__(self, event: Event, future: "asyncio.Future[SequenceNumber]"):
+    def __init__(self, event: Event, future: asyncio.Future[SequenceNumber]):
         self.event = event
         self.future = future
 
@@ -207,7 +208,7 @@ class Committer:
 
         logger.info("committer_closed")
 
-    async def __aenter__(self) -> "Committer":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc_info) -> None:
@@ -248,7 +249,7 @@ class Committer:
 
             try:
                 await self._commit_batch(batch)
-            except Exception as e:  # defensive: never kill the flusher loop
+            except Exception as e:  # noqa: BLE001 — defensive: never kill the flusher loop
                 logger.error("commit_batch_unexpected_error", error=str(e))
                 for pending in batch:
                     if not pending.future.done():
@@ -270,7 +271,7 @@ class Committer:
 
             try:
                 won = await self.storage.put_commit(number, commit.to_msgpack())
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — transferred to the callers' futures
                 for pending in pendings:
                     pending.future.set_exception(e)
                 return

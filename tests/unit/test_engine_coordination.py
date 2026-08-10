@@ -1,6 +1,6 @@
 """Unit tests for the engine's coordination layer: claim, Lease, Document."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import BaseModel
@@ -82,7 +82,7 @@ async def test_expired_lease_is_stolen_and_fences_old_holder(db, storage):
 
     # Force expiry by rewriting the deadline into the past (simulates a
     # crashed holder whose ttl elapsed).
-    past = datetime.now(timezone.utc) - timedelta(seconds=1)
+    past = datetime.now(UTC) - timedelta(seconds=1)
     obj = storage.get_object_sync("state/run-1")
     doc = lease._parse(obj.data)
     storage.put_object_sync(
@@ -104,7 +104,7 @@ async def test_expired_lease_is_stolen_and_fences_old_holder(db, storage):
 
 async def test_expired_lease_not_stolen_when_disabled(db, storage):
     lease = await db.lease("state/run-1", ttl=60, holder="w1")
-    past = datetime.now(timezone.utc) - timedelta(seconds=1)
+    past = datetime.now(UTC) - timedelta(seconds=1)
     obj = storage.get_object_sync("state/run-1")
     doc = lease._parse(obj.data)
     storage.put_object_sync(

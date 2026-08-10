@@ -1,7 +1,8 @@
 """Tests for core type definitions."""
 
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, timezone
 
 from cairndb.core.types import SequenceNumber, Timestamp
 
@@ -67,23 +68,23 @@ class TestTimestamp:
         ts = Timestamp.now()
 
         # Should be recent (within last few seconds)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         delta = now - ts.value
         assert delta.total_seconds() < 1
 
     def test_from_datetime_with_timezone(self):
         """Test creating from timezone-aware datetime."""
-        dt = datetime(2024, 1, 15, 12, 30, 45, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 15, 12, 30, 45, tzinfo=UTC)
         ts = Timestamp.from_datetime(dt)
 
         assert ts.value == dt
 
     def test_from_datetime_naive_assumes_utc(self):
         """Test that naive datetimes are treated as UTC."""
-        dt = datetime(2024, 1, 15, 12, 30, 45)  # No timezone
+        dt = datetime(2024, 1, 15, 12, 30, 45)  # noqa: DTZ001 — naive on purpose
         ts = Timestamp.from_datetime(dt)
 
-        assert ts.value.tzinfo == timezone.utc
+        assert ts.value.tzinfo == UTC
         assert ts.value.year == 2024
         assert ts.value.month == 1
         assert ts.value.day == 15
@@ -112,4 +113,4 @@ class TestTimestamp:
         ts = Timestamp.now()
 
         with pytest.raises(AttributeError):
-            ts.value = datetime.now(timezone.utc)  # type: ignore
+            ts.value = datetime.now(UTC)  # type: ignore

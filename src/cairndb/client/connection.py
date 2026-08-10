@@ -7,11 +7,11 @@ mtime change on the next session request).
 """
 
 import os
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import structlog
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from cairndb.client.config import ClientConfig
 from cairndb.client.registry import HandlerRegistry
@@ -21,7 +21,7 @@ from cairndb.utils.filesystem import get_file_mtime
 logger = structlog.get_logger(__name__)
 
 
-def _create_storage(config: ClientConfig):  # noqa: ANN201
+def _create_storage(config: ClientConfig):
     """Create a storage backend from client config.
 
     Uses the ``create_storage`` factory from ``cairndb.storage`` to

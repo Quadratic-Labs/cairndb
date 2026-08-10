@@ -1,8 +1,8 @@
 """Unit tests for GCS storage backend."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 from google.api_core.exceptions import NotFound as GCSNotFound
 from google.api_core.exceptions import PreconditionFailed as GCSPreconditionFailed
 

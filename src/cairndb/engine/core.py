@@ -17,20 +17,19 @@ One engine = one bucket (or one prefix of one bucket). See
 docs/ENGINE_API.md for the full design.
 """
 
-from typing import Any
+from typing import Any, Self
 
 import structlog
 
 from cairndb.core.types import SequenceNumber
-from cairndb.storage.base import BlobStorage
-from cairndb.storage.config import StorageConfig
-
 from cairndb.engine import coordination
 from cairndb.engine.coordination import ClaimResult, Document, Lease
 from cairndb.engine.logs import Log
 from cairndb.engine.objects import Objects
 from cairndb.engine.projection import Projection, SchemaInitializer
 from cairndb.engine.transactions import Transaction, TransactionManager
+from cairndb.storage.base import BlobStorage
+from cairndb.storage.config import StorageConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -51,7 +50,7 @@ class CairnDB:
         self._projections: list[Projection] = []
 
     @classmethod
-    def configure(cls, config: dict[str, Any] | StorageConfig) -> "CairnDB":
+    def configure(cls, config: dict[str, Any] | StorageConfig) -> CairnDB:
         """Build an engine from configuration.
 
         Accepts either a StorageConfig, or a dict with a ``"storage"`` key
@@ -187,7 +186,7 @@ class CairnDB:
             self._tx = None
         logger.info("engine_closed")
 
-    async def __aenter__(self) -> "CairnDB":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc_info) -> None:

@@ -1,9 +1,9 @@
 """Unit tests for S3 storage backend."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import botocore.exceptions
+import pytest
 
 from cairndb.core.exceptions import StorageError
 

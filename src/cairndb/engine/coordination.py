@@ -16,16 +16,16 @@ the primitive form, the async methods wrap them in a worker thread.
 
 import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import structlog
 
 from cairndb.core.exceptions import CairnDBError, LeaseLost
-from cairndb.storage.base import BlobStorage
-
 from cairndb.engine.objects import check_key
+from cairndb.storage.base import BlobStorage
 
 logger = structlog.get_logger(__name__)
 
@@ -34,7 +34,7 @@ _UPDATE_ATTEMPTS = 10
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _encode(value: Any) -> bytes:

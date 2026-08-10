@@ -5,17 +5,19 @@ race-safe: replay is deterministic and the upload is put-if-absent, so two
 jobs racing produce one object with identical content either way.
 """
 
+import asyncio
 import os
 import shutil
 import tempfile
+from pathlib import Path
 
 import structlog
 
-from cairndb.core.exceptions import ReplayError
-from cairndb.storage.base import BlobStorage
+from cairndb.client.projector import SchemaInitializer
 from cairndb.client.registry import HandlerRegistry
 from cairndb.client.replay import ReplayEngine
-from cairndb.client.projector import SchemaInitializer
+from cairndb.core.exceptions import ReplayError
+from cairndb.storage.base import BlobStorage
 
 logger = structlog.get_logger(__name__)
 
@@ -100,8 +102,7 @@ class SnapshotBuilder:
             if last_sequence is None:
                 raise ReplayError("No commits available to build a snapshot from")
 
-            with open(db_path, "rb") as f:
-                data = f.read()
+            data = await asyncio.to_thread(Path(db_path).read_bytes)
 
             created = await self.storage.put_snapshot(
                 self.schema_version, last_sequence.commit, data

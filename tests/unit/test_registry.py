@@ -2,10 +2,10 @@
 
 import pytest
 
-from cairndb.core.types import SequenceNumber, EventType, Timestamp, SchemaVersion
-from cairndb.core.log import Event, SequencedEvent
-from cairndb.core.exceptions import HandlerNotFoundError
 from cairndb.client.registry import HandlerRegistry
+from cairndb.core.exceptions import HandlerNotFoundError
+from cairndb.core.log import Event, SequencedEvent
+from cairndb.core.types import EventType, SchemaVersion, SequenceNumber, Timestamp
 
 
 class TestHandlerRegistry:

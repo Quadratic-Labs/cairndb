@@ -111,12 +111,12 @@ class ClientConfig(BaseModel):
         return f"{self.db_path}.new"
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ClientConfig":
+    def from_dict(cls, data: dict) -> ClientConfig:
         """Create config from dictionary."""
         return cls(**data)
 
     @classmethod
-    def from_env(cls) -> "ClientConfig":
+    def from_env(cls) -> ClientConfig:
         """Build configuration from ``CAIRNDB_*`` environment variables.
 
         Supported variables:

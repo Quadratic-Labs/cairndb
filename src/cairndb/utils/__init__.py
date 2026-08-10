@@ -1,5 +1,5 @@
 """Utility functions for CairnDB."""
 
-from cairndb.utils.filesystem import copy_database, atomic_swap
+from cairndb.utils.filesystem import atomic_swap, copy_database
 
-__all__ = ["copy_database", "atomic_swap"]
+__all__ = ["atomic_swap", "copy_database"]

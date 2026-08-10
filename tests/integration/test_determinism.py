@@ -4,11 +4,9 @@ Replaying the same log must always produce the same SQLite state, and
 re-running apply_updates against an up-to-date projection must be a no-op.
 """
 
-import pytest
 
 from cairndb.client.projector import Projector
 from cairndb.client.replay import ReplayEngine
-
 from tests.conftest import (
     commit_events,
     init_users_projection,

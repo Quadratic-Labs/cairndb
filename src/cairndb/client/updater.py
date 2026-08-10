@@ -4,10 +4,10 @@ import asyncio
 
 import structlog
 
-from cairndb.storage.base import BlobStorage
-from cairndb.client.registry import HandlerRegistry
 from cairndb.client.config import ClientConfig
 from cairndb.client.projector import Projector
+from cairndb.client.registry import HandlerRegistry
+from cairndb.storage.base import BlobStorage
 
 logger = structlog.get_logger(__name__)
 
@@ -97,7 +97,7 @@ class BackgroundUpdater:
             except asyncio.CancelledError:
                 break
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — resilience loop: log and retry
                 logger.error(
                     "update_loop_error",
                     error=str(e),

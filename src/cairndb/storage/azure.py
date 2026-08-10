@@ -5,13 +5,13 @@ import asyncio
 import structlog
 
 try:
-    from azure.storage.blob import BlobServiceClient
     from azure.core import MatchConditions
     from azure.core.exceptions import (
         ResourceExistsError,
         ResourceModifiedError,
         ResourceNotFoundError,
     )
+    from azure.storage.blob import BlobServiceClient
 except ImportError as e:
     raise ImportError(
         "azure-storage-blob is required for Azure storage. "

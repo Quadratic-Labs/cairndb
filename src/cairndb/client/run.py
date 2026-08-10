@@ -22,11 +22,11 @@ import signal
 import aiosqlite
 import structlog
 
-from cairndb.committer import Committer
 from cairndb.client.config import ClientConfig
 from cairndb.client.connection import _create_storage
-from cairndb.client.demo_handlers import registry, init_schema
+from cairndb.client.demo_handlers import init_schema, registry
 from cairndb.client.updater import BackgroundUpdater
+from cairndb.committer import Committer
 from cairndb.core.log import Event
 from cairndb.core.types import EventType, SchemaVersion, Timestamp
 
@@ -39,7 +39,7 @@ async def _count_events(db_path: str) -> int:
             cursor = await db.execute("SELECT COUNT(*) FROM demo_events")
             row = await cursor.fetchone()
             return row[0] if row else 0
-    except Exception:
+    except aiosqlite.Error:
         return 0
 
 
@@ -76,7 +76,7 @@ async def run_demo() -> None:
 
         try:
             await asyncio.wait_for(stop.wait(), timeout=3.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
     await committer.close()

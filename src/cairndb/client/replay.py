@@ -1,15 +1,15 @@
 """Commit replay engine."""
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import aiosqlite
 import structlog
 
-from cairndb.core.types import SequenceNumber
-from cairndb.core.log import Commit
-from cairndb.core.exceptions import ReplayError
-from cairndb.storage.base import BlobStorage
 from cairndb.client.registry import HandlerRegistry
+from cairndb.core.exceptions import ReplayError
+from cairndb.core.log import Commit
+from cairndb.core.types import SequenceNumber
+from cairndb.storage.base import BlobStorage
 
 logger = structlog.get_logger(__name__)
 

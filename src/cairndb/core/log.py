@@ -5,12 +5,13 @@ holds an ordered batch of events; an event's global sequence number is its
 position: SequenceNumber(commit_number, index).
 """
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any
 
 import msgpack
 
-from cairndb.core.types import SequenceNumber, EventType, Timestamp, SchemaVersion
+from cairndb.core.types import EventType, SchemaVersion, SequenceNumber, Timestamp
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,7 @@ class Event:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Event":
+    def from_dict(cls, data: dict[str, Any]) -> Event:
         """Reconstruct typed fields from serialized representation."""
         return cls(
             event_type=EventType(data["event_type"]),
@@ -126,7 +127,7 @@ class Commit:
         return msgpack.packb(data, use_bin_type=True)
 
     @classmethod
-    def from_msgpack(cls, data: bytes) -> "Commit":
+    def from_msgpack(cls, data: bytes) -> Commit:
         """Deserialize from MessagePack binary format."""
         unpacked = msgpack.unpackb(data, raw=False)
         return cls(

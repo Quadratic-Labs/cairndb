@@ -5,9 +5,9 @@ import asyncio
 import structlog
 
 try:
-    from google.cloud import storage as gcs
     from google.api_core.exceptions import NotFound as GCSNotFound
     from google.api_core.exceptions import PreconditionFailed as GCSPreconditionFailed
+    from google.cloud import storage as gcs
 except ImportError as e:
     raise ImportError(
         "google-cloud-storage is required for GCS storage. "

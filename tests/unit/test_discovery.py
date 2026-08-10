@@ -4,7 +4,6 @@ import pytest
 
 from cairndb.client.discovery import DiscoveryService
 from cairndb.core.types import SequenceNumber
-
 from tests.conftest import commit_events, make_event
 
 
