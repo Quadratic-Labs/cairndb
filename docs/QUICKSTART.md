@@ -1,6 +1,7 @@
 # CairnDB Quick Start
 
-Get a working event-sourced database — with zero servers — in 5 minutes.
+Get a working serverless database engine — logs, coordination, and SQL
+projections with zero servers — in 5 minutes.
 
 ## Prerequisites
 
@@ -33,83 +34,125 @@ rebuilt from the log.
 
 ## Building your own application
 
-### 1. Define events and handlers
+### 1. Configure the engine
 
-Events are facts; handlers project them into SQLite tables.
+One engine = one bucket. Everything hangs off the `CairnDB` facade
+(see [ENGINE_API.md](ENGINE_API.md) for the full API and semantics):
 
 ```python
-# myapp/projections.py
-import aiosqlite
-from cairndb.client import HandlerRegistry
+from cairndb import CairnDB
 
-registry = HandlerRegistry()
+db = CairnDB.configure({"storage": {"type": "s3", "bucket": "myapp"}})
+# filesystem for dev: {"storage": {"type": "filesystem", "path": "./data"}}
+...
+await db.close()
+```
+
+### 2. Write events to a log
+
+Events are immutable facts on a named, totally ordered commit log:
+
+```python
+from cairndb import Event, EventType, SchemaVersion, Timestamp
+
+seq = await db.log("users").append(Event(
+    event_type=EventType("user.created"),
+    timestamp=Timestamp.now(),
+    payload={"id": 1, "name": "Alice"},
+    schema_version=SchemaVersion("1.0.0"),
+))
+# `seq` = (commit, index): a total order shared by all of this log's
+# writers. append() returning IS the durability guarantee.
+```
+
+Run as many writer processes as you like — the bucket serializes them per
+log. Use separate named logs for independent domains; each log has its
+own sequence and its own throughput budget.
+
+### 3. Project and query
+
+Handlers replay events into a local, read-only SQLite file. They must be
+deterministic: same events in, same rows out — replay is how everything
+(clients, snapshots, recovery, time travel) works.
+
+```python
+import aiosqlite
 
 async def init_schema(db_path: str) -> None:
-    """Create projection tables on a fresh database."""
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("""
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL DEFAULT ''
+                name TEXT NOT NULL
             )
         """)
-        await db.commit()
+        await conn.commit()
 
-@registry.handler("user.created")
-async def handle_user_created(db, entry):
+proj = db.projection("users_view", log="users", init_schema=init_schema)
+
+@proj.on("user.created")
+async def handle_user_created(conn, entry):
     # entry is a SequencedEvent: .sequence, .payload, .timestamp, .metadata
-    await db.execute(
-        "INSERT INTO users (id, name, email) VALUES (?, ?, ?)",
-        (entry.payload["id"], entry.payload["name"], entry.payload.get("email", "")),
+    await conn.execute(
+        "INSERT INTO users (id, name) VALUES (?, ?)",
+        (entry.payload["id"], entry.payload["name"]),
     )
+
+await proj.start()                    # background polling (or: await proj.refresh())
+await proj.wait_for(seq)              # read-your-writes for a specific flow
+
+with proj.connect() as conn:          # sqlite3, mode=ro — writes raise
+    rows = conn.execute("SELECT name FROM users").fetchall()
+
+old = await proj.as_of(commit=42)     # time travel: projection through commit 42
 ```
 
-Handlers must be deterministic: same events in, same rows out. Replay is
-how everything (clients, snapshots, recovery) works.
+### 4. Coordinate workers — no log required
 
-### 2. Write events
+Coordination is storage-level: put-if-absent and compare-and-swap on
+documents.
 
 ```python
-from cairndb import Committer, Event, EventType, SchemaVersion, Timestamp
-from cairndb.storage import StorageConfig
+# Unique constraint: exactly one caller wins; losers converge on the
+# winner's value (idempotent dispatch, cron-tick dedup, step checkpoints).
+result = await db.claim("dispatch/daily-etl:2026-08-10", {"run_id": rid})
 
-storage = StorageConfig.from_env().create_storage()
+# Fenced ownership: expired leases can be stolen; a fenced holder's
+# writes raise LeaseLost and must be discarded.
+lease = await db.lease(f"state/{rid}", ttl=120, holder=worker_id)
+if lease is not None:
+    try:
+        ...                                   # do the work
+        await lease.renew()                   # heartbeat between steps
+        await lease.release(state={"status": "done"})
+    except LeaseLost:
+        return                                # someone else owns it now
 
-async with Committer(storage) as committer:
-    seq = await committer.append(Event(
-        event_type=EventType("user.created"),
-        timestamp=Timestamp.now(),
-        payload={"id": 1, "name": "Alice"},
-        schema_version=SchemaVersion("1.0.0"),
-    ))
-# `seq` = (commit, index): a total order shared by all writers.
-# append() returning IS the durability guarantee.
+# Typed document with a retrying read-modify-write loop:
+counters = db.doc("metrics/daily")
+await counters.update(lambda c: {**c, "runs": c["runs"] + 1}, create={"runs": 0})
 ```
 
-Run as many writer processes as you like — the bucket serializes them.
-If your events carry invariants that other writers could invalidate
-(uniqueness, balance checks), pass a `revalidate` hook to `Committer`;
-it runs whenever another writer's commits interleave with yours.
-
-### 3. Read with SQLAlchemy
+### 5. Change several keys atomically
 
 ```python
-from cairndb.client import CairnDBClient, ClientConfig
-from myapp.projections import registry, init_schema
+from cairndb import TransactionConflict
 
-config = ClientConfig.from_env()
-client = CairnDBClient(config, registry, init_schema=init_schema)
-await client.start()   # polls the log; one GET per interval when idle
-
-async with client.get_session() as session:  # read-only: writes raise
-    ...
-
-# Read-your-writes for a specific flow:
-await client.wait_for_sequence(str(seq), timeout=10)
+try:
+    async with db.transact() as tx:
+        alice = await tx.get("accounts/alice")     # reads join the read set
+        tx.put("accounts/alice", debit(alice, 10))
+        tx.put("accounts/bob", credit(bob, 10))
+        tx.note("transfer.completed", {"amount": 10})
+except TransactionConflict:
+    ...  # read set was written concurrently — retry or surface
 ```
 
-### 4. Schedule snapshots and retention
+The commit point is a record on the engine's transaction log; run
+`await db.recover_transactions()` at startup (or on a cron) to finish any
+transaction that crashed between commit and apply.
+
+### 6. Schedule snapshots and retention
 
 Snapshots bound client startup time (bootstrap = download snapshot +
 replay tail). Run as a cron/scheduled container job:
@@ -126,6 +169,36 @@ cairndb gc --keep-snapshots 3 --prune-log   # also drop covered history
 `infra/` contains Azure Container Apps Jobs templates wiring both to a
 schedule. Building a snapshot is idempotent and race-safe — overlapping
 runs are harmless.
+
+## Under the hood: the lower-level API
+
+The facade wraps components you can use directly when you need more
+control — the engine adds no storage semantics of its own:
+
+```python
+from cairndb import Committer, Event
+from cairndb.client import CairnDBClient, ClientConfig, HandlerRegistry
+from cairndb.storage import StorageConfig
+
+storage = StorageConfig.from_env().create_storage()
+
+# Write path: the commit protocol, group commit, durable ack.
+async with Committer(storage) as committer:
+    seq = await committer.append(event)
+
+# Read path: SQLAlchemy sessions over the polling projection client.
+registry = HandlerRegistry()
+client = CairnDBClient(ClientConfig.from_env(), registry, init_schema=init_schema)
+await client.start()
+async with client.get_session() as session:   # read-only
+    ...
+await client.wait_for_sequence(str(seq), timeout=10)
+```
+
+If your events carry invariants that other writers could invalidate
+(uniqueness, balance checks), pass a `revalidate` hook to `Committer`; it
+runs whenever another writer's commits interleave with yours. This is the
+same mechanism the transaction layer uses for conflict detection.
 
 ## Configuration reference (env vars)
 

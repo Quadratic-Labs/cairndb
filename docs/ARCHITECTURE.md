@@ -1,9 +1,16 @@
 # CairnDB Architecture
 
-CairnDB is a very cheap, event-sourced database for low/medium workloads,
-built directly on blob storage. There are no long-running servers: writing is
-a library call arbitrated by the bucket itself, reading is a local SQLite
+CairnDB is a serverless database engine for low/medium workloads, built
+directly on blob storage. There are no long-running servers: writing is a
+library call arbitrated by the bucket itself, reading is a local SQLite
 file, and the only scheduled compute is a snapshot job.
+
+This document describes the storage substrate and its invariants — the
+commit log, snapshots, projections, and the conditional object store. The
+engine layers built on top of it (coordination, named logs, transactions,
+declarative projections, behind the `CairnDB` facade) are specified in
+[ENGINE_API.md](ENGINE_API.md); everything there reduces to the two write
+primitives defined here.
 
 ---
 
@@ -15,10 +22,13 @@ These principles are invariants and must not be violated by implementations.
    - All writes are immutable commit objects in the log.
    - No in-place mutation of data ever occurs.
 
-2. **Single global sequence, enforced by the bucket**
-   - Commits are numbered densely (1, 2, 3, …) with no gaps.
+2. **Dense sequence per log, enforced by the bucket**
+   - Within a log, commits are numbered densely (1, 2, 3, …) with no gaps.
    - Ordering is total and authoritative, arbitrated by conditional
      (put-if-absent) writes — never by a process, a lease, or a clock.
+   - There may be many named logs, each with its own sequence; ordering is
+     only defined within a log, and sharding across logs is the scaling
+     mechanism.
 
 3. **Blob storage is the ledger**
    - Commit objects and snapshots are stored in blob/object storage.
@@ -67,22 +77,27 @@ credentials and the committer library is a writer; the bucket serializes them.
 
 ## Storage Layout
 
-All log/snapshot objects are immutable. Two reserved prefixes:
+All log/snapshot objects are immutable. Reserved prefixes:
 
 ```
-log/000000000042.msgpack          # commit #42: one msgpack object per commit,
-                                  # containing an ordered batch of events
-snapshots/v1/000000000040.sqlite  # projection state through commit #40,
-                                  # for projection schema version 1
+log/000000000042.msgpack          # root log, commit #42: one msgpack object
+                                  # per commit (an ordered batch of events)
+snapshots/v1/000000000040.sqlite  # root-log projection state through commit
+                                  # #40, for projection schema version 1
+logs/{name}/log/…                 # named logs: same layout per log
+logs/{name}/snapshots/v1/…        # snapshots of a named log's projections
+logs/_tx/log/…                    # the engine's transaction log
+txapplied/000000000007            # marker: tx commit #7 applied to objects
 ```
 
 Names are zero-padded fixed width so lexicographic order equals numeric order.
-The log is **dense**: commit N+1 is only ever created by a successful
+Every log is **dense**: commit N+1 is only ever created by a successful
 put-if-absent, so there are never gaps. Snapshots are discovered by listing
 their prefix; no manifest or pointer object exists.
 
 Consumers of the generic object API (below) may keep key-addressed objects
-under any *other* prefix in the same store.
+under any *other* prefix in the same store; the engine rejects application
+keys under the reserved prefixes.
 
 ---
 
@@ -160,9 +175,11 @@ Each reading client runs a background updater that:
 
 `BlobStorage` also exposes the conditional-write machinery directly, for
 consumers that need **mutable, etag-guarded documents** next to the immutable
-log (e.g. an orchestrator's lease/state files — this is how
+logs. This is the second write primitive of the system: the engine's
+coordination layer (`claim`, `lease`, `doc` — see
+[ENGINE_API.md](ENGINE_API.md)) is built entirely on it, and it is how
 [Flowlet](https://github.com/Quadratic-Labs/flowlet) implements run-state
-ownership transfer on blob storage):
+ownership transfer on blob storage:
 
 - `get_object(key)` → data + current etag
 - `put_object(key, data, if_absent=True)` → put-if-absent
@@ -179,12 +196,33 @@ callers don't need an event loop.
 The commit log uses none of this beyond put-if-absent: log objects stay
 immutable.
 
+### 7. Engine Facade
+
+Everything above is exposed through the `CairnDB` facade
+([ENGINE_API.md](ENGINE_API.md)), which composes the two write primitives
+into higher-level machinery without adding any new storage semantics:
+
+- **Named logs** reroute the commit protocol under `logs/{name}/` via the
+  generic object API — same Committer, one sequencer per log.
+- **Coordination** (`claim`/`lease`/`doc`) is put-if-absent and CAS on
+  documents, with epochs for fencing.
+- **Transactions** use a dedicated log (`logs/_tx/`) as the commit point
+  and fold committed mutations into the object store idempotently.
+- **Projections** wrap the client updater declaratively, per log.
+
 ---
 
 ## Consistency Model
 
 - **Writes**: linearizable — the bucket serializes commits; an acked write
-  is durable and totally ordered.
+  is durable and totally ordered within its log.
+- **Objects**: linearizable per key (backend conditional writes); claims
+  have exactly one winner; leases exclude concurrent holders up to clock
+  skew, and fencing by epoch + CAS makes even a paused holder's late
+  writes fail.
+- **Transactions**: optimistic serializability between transactions; the
+  commit point is a durable record in `logs/_tx/`, and conflicting
+  transactions abort (`TransactionConflict`).
 - **Reads**: eventually consistent, seconds of lag by design (poll interval).
 - **Per-client reads**: monotonic (the projection only moves forward).
 - **Read-your-writes**: opt-in per flow — the write returns `(commit, index)`;
@@ -221,9 +259,10 @@ Two independently versioned layers:
 - Snapshot job: scheduled serverless container, minutes/day.
 - No idle compute anywhere. Storage is the only always-on cost.
 
-Throughput ceiling: one commit per storage round-trip (~10–30 commits/s),
-multiplied by group-commit batching. This is a deliberate trade-off; shard
-into multiple logs if it is ever exceeded.
+Throughput ceiling: one commit per storage round-trip (~10–30 commits/s)
+*per log*, multiplied by group-commit batching. This is a deliberate
+trade-off; named logs are the sharding mechanism when a single log's
+ceiling is exceeded.
 
 ---
 
@@ -239,8 +278,9 @@ CairnDB explicitly does **not** aim to be:
 
 ## Mental Model Summary
 
-- **Blob storage is the ledger — and the sequencer**
+- **Blob storage is the ledger — and the sequencer, and the lock manager**
 - **Commits are truth; the ack follows the PUT**
+- **Two write primitives: put-if-absent (logs, claims) and CAS (documents)**
 - **Snapshots are checkpoints**
 - **SQLite is a cache**
 - **SQLAlchemy is a reader**
