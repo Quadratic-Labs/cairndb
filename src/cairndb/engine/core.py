@@ -17,6 +17,7 @@ One engine = one bucket (or one prefix of one bucket). See
 docs/ENGINE_API.md for the full design.
 """
 
+from collections.abc import Callable
 from typing import Any, Self
 
 import structlog
@@ -83,10 +84,17 @@ class CairnDB:
         ttl: float,
         holder: str | None = None,
         steal_if_expired: bool = True,
+        state_fn: Callable[[Any], Any] | None = None,
     ) -> Lease | None:
-        """Acquire the lease on `key`, or None if it is actively held."""
+        """Acquire the lease on `key`, or None if it is actively held.
+
+        ``state_fn`` (current state → new state, pure, None on fresh
+        creation) is applied atomically with the acquisition; an exception
+        it raises aborts the acquisition with nothing written.
+        """
         return await coordination.acquire(
-            self.storage, key, ttl=ttl, holder=holder, steal_if_expired=steal_if_expired
+            self.storage, key, ttl=ttl, holder=holder,
+            steal_if_expired=steal_if_expired, state_fn=state_fn,
         )
 
     def lease_sync(
@@ -96,10 +104,12 @@ class CairnDB:
         ttl: float,
         holder: str | None = None,
         steal_if_expired: bool = True,
+        state_fn: Callable[[Any], Any] | None = None,
     ) -> Lease | None:
         """Sync twin of :meth:`lease`."""
         return coordination.acquire_sync(
-            self.storage, key, ttl=ttl, holder=holder, steal_if_expired=steal_if_expired
+            self.storage, key, ttl=ttl, holder=holder,
+            steal_if_expired=steal_if_expired, state_fn=state_fn,
         )
 
     def doc(self, key: str, model: type | None = None) -> Document:

@@ -243,6 +243,7 @@ def acquire_sync(
     ttl: float,
     holder: str | None = None,
     steal_if_expired: bool = True,
+    state_fn: Callable[[Any], Any] | None = None,
 ) -> Lease | None:
     """
     Acquire the lease on `key` for `ttl` seconds.
@@ -251,6 +252,17 @@ def acquire_sync(
     it is expired but ``steal_if_expired`` is False. Expiry is judged
     against the holder-written deadline, so clocks only need to agree to
     within the ttl — choose generous ttls.
+
+    ``state_fn`` makes the acquisition a transition: it receives the
+    document's current state (None on fresh creation) and its return value
+    is written atomically with the acquisition itself, so there is never a
+    window where the lease is held but its state is stale. It must be pure
+    — a lost CAS race re-reads and calls it again. An exception raised by
+    ``state_fn`` propagates and aborts the acquisition with nothing
+    written; callers use this to refuse a lease whose state proves it
+    should not be taken (e.g. work already finished). Without ``state_fn``
+    a fresh document starts with state None and a steal preserves the
+    existing state.
     """
     check_key(key)
     if ttl <= 0:
@@ -262,15 +274,16 @@ def acquire_sync(
         current = storage.get_object_sync(key)
 
         if current is None:
+            state = state_fn(None) if state_fn is not None else None
             etag = storage.put_object_sync(
-                key, Lease._doc_bytes(1, holder, deadline, None), if_absent=True
+                key, Lease._doc_bytes(1, holder, deadline, state), if_absent=True
             )
             if etag is None:
                 continue  # raced another acquirer; re-read
             logger.info("lease_acquired", key=key, epoch=1, holder=holder)
             return Lease(
                 storage, key, ttl=ttl, epoch=1, holder=holder,
-                deadline_at=deadline, state=None, etag=etag,
+                deadline_at=deadline, state=state, etag=etag,
             )
 
         doc = Lease._parse(current.data)
@@ -280,9 +293,10 @@ def acquire_sync(
             return None
 
         epoch = doc["epoch"] + 1
+        state = state_fn(doc.get("state")) if state_fn is not None else doc.get("state")
         etag = storage.put_object_sync(
             key,
-            Lease._doc_bytes(epoch, holder, deadline, doc.get("state")),
+            Lease._doc_bytes(epoch, holder, deadline, state),
             if_match=current.etag,
         )
         if etag is None:
@@ -290,7 +304,7 @@ def acquire_sync(
         logger.info("lease_acquired", key=key, epoch=epoch, holder=holder, stolen=True)
         return Lease(
             storage, key, ttl=ttl, epoch=epoch, holder=holder,
-            deadline_at=deadline, state=doc.get("state"), etag=etag,
+            deadline_at=deadline, state=state, etag=etag,
         )
 
     raise CairnDBError(f"lease on {key!r} could not settle after {_ACQUIRE_ATTEMPTS} attempts")
@@ -303,11 +317,13 @@ async def acquire(
     ttl: float,
     holder: str | None = None,
     steal_if_expired: bool = True,
+    state_fn: Callable[[Any], Any] | None = None,
 ) -> Lease | None:
     """Async twin of :func:`acquire_sync`."""
     return await asyncio.to_thread(
         lambda: acquire_sync(
-            storage, key, ttl=ttl, holder=holder, steal_if_expired=steal_if_expired
+            storage, key, ttl=ttl, holder=holder,
+            steal_if_expired=steal_if_expired, state_fn=state_fn,
         )
     )
 

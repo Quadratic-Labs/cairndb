@@ -121,6 +121,61 @@ async def test_lease_write_updates_state(db):
     assert lease.state == {"progress": 0.5}
 
 
+async def test_lease_state_fn_seeds_fresh_state(db):
+    lease = await db.lease(
+        "state/run-1", ttl=60, holder="w1",
+        state_fn=lambda s: {"attempt": 1} if s is None else s,
+    )
+    assert lease is not None
+    assert lease.state == {"attempt": 1}
+
+
+async def test_lease_state_fn_transitions_on_reacquire(db):
+    first = await db.lease(
+        "state/run-1", ttl=60, holder="w1",
+        state_fn=lambda s: {"attempt": 1},
+    )
+    await first.release()
+
+    second = await db.lease(
+        "state/run-1", ttl=60, holder="w2",
+        state_fn=lambda s: {"attempt": s["attempt"] + 1},
+    )
+    assert second is not None
+    assert second.epoch == 2
+    assert second.state == {"attempt": 2}
+
+
+async def test_lease_state_fn_exception_aborts_without_writing(db, storage):
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+    await lease.release(state={"status": "closed"})
+    before = storage.get_object_sync("state/run-1")
+
+    class AlreadyClosed(Exception):
+        pass
+
+    def refuse(state):
+        raise AlreadyClosed(state)
+
+    with pytest.raises(AlreadyClosed):
+        await db.lease("state/run-1", ttl=60, holder="w2", state_fn=refuse)
+
+    after = storage.get_object_sync("state/run-1")
+    assert after.etag == before.etag  # nothing was written
+
+
+async def test_lease_state_fn_not_applied_when_held(db):
+    assert await db.lease("state/run-1", ttl=60, holder="w1") is not None
+    calls = []
+
+    def spy(state):
+        calls.append(state)
+        return state
+
+    assert await db.lease("state/run-1", ttl=60, holder="w2", state_fn=spy) is None
+    assert calls == []
+
+
 # ----------------------------------------------------------------------
 # Document
 # ----------------------------------------------------------------------
