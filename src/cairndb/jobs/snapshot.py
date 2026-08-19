@@ -88,7 +88,7 @@ class SnapshotBuilder:
         )
 
         tmp_dir = tempfile.mkdtemp(prefix="cairndb-snapshot-")
-        db_path = os.path.join(tmp_dir, "snapshot.db")
+        db_path = os.path.join(tmp_dir, "snapshot.db")  # pragma: no mutate (internal name)
 
         try:
             await self.replay_engine.initialize_metadata_table(db_path)
