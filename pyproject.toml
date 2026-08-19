@@ -75,6 +75,13 @@ python_files = ["test_*.py"]
 [tool.mutmut]
 source_paths = ["src/cairndb/"]
 pytest_add_cli_args_test_selection = ["tests/"]
+do_not_mutate = [
+    # Demo entry point and its handlers: not correctness surface — mutating
+    # ping payloads / tick intervals would only calcify the demo. A smoke
+    # test (test_client_run.py) guards that `make demo` still works.
+    "*/cairndb/client/run.py",
+    "*/cairndb/client/demo_handlers.py",
+]
 do_not_mutate_patterns = [
     # disable mutations of all logger.info/debug/... statements
     'logger\.\w+',

@@ -40,7 +40,7 @@ class BackgroundUpdater:
         """
         self.config = config
         self.projector = Projector(config, storage, registry, init_schema=init_schema)
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task | None = None  # pragma: no mutate (start() assigns first)
         self._running = False
         self._update_count = 0
 

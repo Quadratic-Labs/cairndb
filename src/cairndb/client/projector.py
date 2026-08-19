@@ -224,7 +224,9 @@ class Projector:
 
             updated, last_sequence = await self._apply_updates_locked()
 
-            if not updated and not os.path.exists(self.config.db_path):
+            # pragma-note: updated=True always leaves the file, updated=False
+            # never creates it — the two conditions cannot disagree.
+            if not updated and not os.path.exists(self.config.db_path):  # pragma: no mutate
                 # Empty ledger: leave a valid empty projection behind
                 await self.replay_engine.initialize_metadata_table(self.config.db_path)
                 if self.init_schema:

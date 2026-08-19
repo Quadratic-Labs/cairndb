@@ -120,7 +120,7 @@ class ReplayEngine:
         """Apply one commit inside one transaction. Returns events applied."""
         applied = 0
 
-        await db.execute("BEGIN")
+        await db.execute("BEGIN")  # pragma: no mutate (SQL keywords are case-insensitive)
         try:
             for sequenced in commit.sequenced_events():
                 if not self.registry.has_handler(sequenced.event_type):

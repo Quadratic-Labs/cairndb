@@ -47,3 +47,16 @@ class TestHasNewCommits:
         await commit_events(storage, make_event())  # commit 2
 
         assert await discovery.has_new_commits(SequenceNumber(1, 0)) is True
+
+
+class TestDiscoveryReporting:
+    async def test_found_snapshot_is_reported(self, storage, discovery):
+        from structlog.testing import capture_logs
+
+        await storage.put_snapshot("1.0.0", 3, b"s")
+        with capture_logs() as logs:
+            assert await discovery.find_latest_snapshot("1.0.0") == 3
+
+        found = [e for e in logs if e["event"] == "latest_snapshot_found"]
+        assert len(found) == 1
+        assert found[0]["number"] == 3

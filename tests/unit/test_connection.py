@@ -262,3 +262,30 @@ async def test_is_running_reflects_updater_state():
 
         await client.stop()
         assert client.is_running is False
+
+
+@pytest.mark.asyncio
+async def test_client_wires_registry_and_init_schema(client_config):
+    """The registry and init_schema hook must reach the projector."""
+    registry = HandlerRegistry()
+
+    async def schema(db_path):
+        raise AssertionError("not called during construction")
+
+    client = CairnDBClient(client_config, registry, init_schema=schema)
+    assert client._registry is registry
+    assert client._updater.projector.init_schema is schema
+
+
+@pytest.mark.asyncio
+async def test_wait_for_sequence_forwards_default_timeout(client_config, monkeypatch):
+    client = CairnDBClient(client_config, HandlerRegistry())
+    captured = []
+
+    async def spy(sequence, timeout):
+        captured.append((sequence, timeout))
+        return True
+
+    monkeypatch.setattr(client._updater, "wait_for_sequence", spy)
+    assert await client.wait_for_sequence("000000000001:000000") is True
+    assert captured == [("000000000001:000000", 30.0)]
