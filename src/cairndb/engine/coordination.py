@@ -146,7 +146,7 @@ class Lease:
         self.deadline_at = deadline_at
         self.state = state
         self._etag = etag
-        self._released = False
+        self._released = False  # pragma: no mutate (only read for truthiness)
 
     # -- document (de)serialization ------------------------------------
 

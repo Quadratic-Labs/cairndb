@@ -1,6 +1,7 @@
 """Unit tests for the engine's coordination layer: claim, Lease, Document."""
 
 import json
+from contextlib import contextmanager
 from datetime import timedelta
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from cairndb import CairnDB, LeaseLost
 from cairndb.core.exceptions import CairnDBError
 from cairndb.core.types import Timestamp
+from cairndb.engine.coordination import Lease, _encode, acquire, acquire_sync, signal_sync
 
 
 @pytest.fixture
@@ -15,27 +17,78 @@ def db(storage):
     return CairnDB(storage)
 
 
+def _expire(storage, key: str) -> None:
+    """Rewrite the lease deadline into the past (simulates a crashed
+    holder whose ttl elapsed)."""
+    obj = storage.get_object_sync(key)
+    doc = Lease._parse(obj.data)
+    storage.put_object_sync(
+        key,
+        Lease._doc_bytes(
+            doc["epoch"], doc["holder"], Timestamp.now() - timedelta(seconds=1), doc["state"]
+        ),
+        if_match=obj.etag,
+    )
+
+
+@contextmanager
+def _interleave_before_next_put(storage, write):
+    """Run `write()` just before the next put goes through, so that put's
+    precondition observes a concurrent writer and must lose."""
+    original_put = storage.put_object_sync
+    calls = 0
+
+    def racing_put(key, data, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            write()
+        return original_put(key, data, **kwargs)
+
+    storage.put_object_sync = racing_put
+    try:
+        yield
+    finally:
+        storage.put_object_sync = original_put
+
+
+# ----------------------------------------------------------------------
+# document encoding
+# ----------------------------------------------------------------------
+
+
+def test_encode_is_canonical():
+    # The encoded document is a cross-process protocol: compact separators
+    # and sorted keys keep the bytes (and content-derived etags) deterministic.
+    assert _encode({"b": 1, "a": [1, 2]}) == b'{"a":[1,2],"b":1}'
+
+
 # ----------------------------------------------------------------------
 # claim
 # ----------------------------------------------------------------------
 
 
-async def test_claim_first_caller_wins(db):
+async def test_claim_first_caller_wins(db, storage):
     result = await db.claim("dispatch/etl:2026-08-09", {"run_id": "r1"})
-    assert result.won
+    assert result.won is True
+    assert result.key == "dispatch/etl:2026-08-09"
     assert result.value == {"run_id": "r1"}
+    assert result.etag == storage.get_object_sync("dispatch/etl:2026-08-09").etag
 
 
-async def test_claim_losers_converge_on_winner_value(db):
+async def test_claim_losers_converge_on_winner_value(db, storage):
     await db.claim("dispatch/k", {"run_id": "winner"})
     result = await db.claim("dispatch/k", {"run_id": "loser"})
-    assert not result.won
+    assert result.won is False
+    assert result.key == "dispatch/k"
     assert result.value == {"run_id": "winner"}
+    assert result.etag == storage.get_object_sync("dispatch/k").etag
 
 
 async def test_claim_sync_twin(db):
     result = db.claim_sync("dispatch/sync", {"v": 1})
     assert result.won
+    assert result.key == "dispatch/sync"
     assert not db.claim_sync("dispatch/sync", {"v": 2}).won
 
 
@@ -80,17 +133,7 @@ async def test_lease_release_then_reacquire_bumps_epoch(db):
 
 async def test_expired_lease_is_stolen_and_fences_old_holder(db, storage):
     lease = await db.lease("state/run-1", ttl=60, holder="w1")
-
-    # Force expiry by rewriting the deadline into the past (simulates a
-    # crashed holder whose ttl elapsed).
-    past = Timestamp.now() - timedelta(seconds=1)
-    obj = storage.get_object_sync("state/run-1")
-    doc = lease._parse(obj.data)
-    storage.put_object_sync(
-        "state/run-1",
-        lease._doc_bytes(doc["epoch"], doc["holder"], past, doc["state"]),
-        if_match=obj.etag,
-    )
+    _expire(storage, "state/run-1")
 
     thief = await db.lease("state/run-1", ttl=60, holder="w2")
     assert thief is not None
@@ -104,16 +147,178 @@ async def test_expired_lease_is_stolen_and_fences_old_holder(db, storage):
 
 
 async def test_expired_lease_not_stolen_when_disabled(db, storage):
-    lease = await db.lease("state/run-1", ttl=60, holder="w1")
-    past = Timestamp.now() - timedelta(seconds=1)
-    obj = storage.get_object_sync("state/run-1")
-    doc = lease._parse(obj.data)
-    storage.put_object_sync(
-        "state/run-1",
-        lease._doc_bytes(doc["epoch"], doc["holder"], past, doc["state"]),
-        if_match=obj.etag,
-    )
+    assert await db.lease("state/run-1", ttl=60, holder="w1") is not None
+    _expire(storage, "state/run-1")
     assert await db.lease("state/run-1", ttl=60, steal_if_expired=False) is None
+
+
+def test_lease_expiry_boundary_is_inclusive():
+    now = Timestamp.now()
+    assert Lease._is_expired({"holder": "w1", "deadline_at": now}, now) is True
+
+
+async def test_lease_ttl_must_be_positive_boundary(db):
+    with pytest.raises(ValueError):
+        await db.lease("state/run-1", ttl=0)
+    assert await db.lease("state/run-1", ttl=0.5) is not None
+
+
+async def test_acquire_steals_expired_lease_by_default(storage):
+    # steal_if_expired=True is the coordination-layer default; the engine
+    # facade always passes it explicitly, so exercise the module functions
+    # directly with the argument omitted.
+    assert acquire_sync(storage, "state/run-1", ttl=60, holder="w1") is not None
+    _expire(storage, "state/run-1")
+    stolen = await acquire(storage, "state/run-1", ttl=60, holder="w2")
+    assert stolen is not None and stolen.epoch == 2
+    _expire(storage, "state/run-1")
+    stolen = acquire_sync(storage, "state/run-1", ttl=60, holder="w3")
+    assert stolen is not None and stolen.epoch == 3
+
+
+async def test_guarded_writes_preserve_ownership(db, storage):
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+    await lease.renew()
+    assert lease.holder == "w1"
+    await lease.write({"p": 1})
+    assert lease.holder == "w1"
+    await lease.update_state(lambda s: s)
+    assert lease.holder == "w1"
+
+    doc = json.loads(storage.get_object_sync("state/run-1").data)
+    assert doc["holder"] == "w1"
+    assert await db.lease("state/run-1", ttl=60, holder="w2", steal_if_expired=False) is None
+
+
+async def test_signal_absorbed_after_prior_guarded_write(db):
+    # The etag observed at a successful write must guard the next one: a
+    # signal landing between two guarded writes is absorbed, not clobbered.
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+    await lease.write({"p": 0})
+    await db.signal("state/run-1", lambda s: {**s, "cancel_requested": True})
+    await lease.renew()
+    assert lease.state == {"p": 0, "cancel_requested": True}
+
+
+async def test_deleted_lease_document_fences_holder(db, storage):
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+    storage.delete_object_sync("state/run-1")
+    with pytest.raises(LeaseLost):
+        await lease.renew()
+
+
+async def test_same_holder_reacquiring_fences_its_old_lease(db, storage):
+    # A crashed-and-restarted worker may reuse its holder name; the epoch
+    # alone must fence the stale Lease object.
+    old = await db.lease("state/run-1", ttl=60, holder="w1")
+    _expire(storage, "state/run-1")
+    new = await db.lease("state/run-1", ttl=60, holder="w1")
+    assert new.epoch == 2
+    with pytest.raises(LeaseLost):
+        await old.renew()
+
+
+async def test_repeated_signals_exhaust_guarded_write_patience(db):
+    # Every retry must stay CAS-guarded: when a fresh signal lands before
+    # each write attempt, the attempt bound runs out and the write fails
+    # rather than clobbering a signal it never observed.
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+
+    def signaled_every_attempt(state):
+        # Deliberately impure: simulates an outsider signaling in the
+        # window between the holder's read and its write, every time.
+        db.signal_sync("state/run-1", lambda s: {"seq": ((s or {}).get("seq") or 0) + 1})
+        return {"mine": True}
+
+    with pytest.raises(LeaseLost):
+        await lease.update_state(signaled_every_attempt)
+
+
+async def test_writes_after_release_raise_lease_lost(db):
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+    await lease.release()
+    with pytest.raises(LeaseLost):
+        await lease.renew()
+    with pytest.raises(LeaseLost):
+        await lease.write({"p": 1})
+
+
+async def test_fresh_acquire_race_converges(db, storage):
+    # Another acquirer creates the document between our read and our
+    # put-if-absent; we must lose the put and converge on their lease.
+    def rival_creates():
+        storage.put_object_sync(
+            "state/run-1",
+            Lease._doc_bytes(1, "rival", Timestamp.now() + timedelta(seconds=60), None),
+            if_absent=True,
+        )
+
+    with _interleave_before_next_put(storage, rival_creates):
+        assert await db.lease("state/run-1", ttl=60, holder="w1") is None
+
+
+async def test_steal_race_converges(db, storage):
+    # Another thief steals the expired lease between our read and our CAS;
+    # we must lose the CAS and observe their now-active lease.
+    assert await db.lease("state/run-1", ttl=60, holder="w1") is not None
+    _expire(storage, "state/run-1")
+
+    def rival_steals():
+        obj = storage.get_object_sync("state/run-1")
+        doc = Lease._parse(obj.data)
+        storage.put_object_sync(
+            "state/run-1",
+            Lease._doc_bytes(
+                doc["epoch"] + 1, "rival", Timestamp.now() + timedelta(seconds=60), doc["state"]
+            ),
+            if_match=obj.etag,
+        )
+
+    with _interleave_before_next_put(storage, rival_steals):
+        assert await db.lease("state/run-1", ttl=60, holder="w2") is None
+
+
+async def test_steal_writes_faithful_document(db, storage):
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+    await lease.write({"x": 1})
+    _expire(storage, "state/run-1")
+
+    thief = await db.lease("state/run-1", ttl=60, holder="w2")
+    assert thief is not None
+    doc = json.loads(storage.get_object_sync("state/run-1").data)
+    assert doc["epoch"] == 2
+    assert doc["holder"] == "w2"
+    assert doc["state"] == {"x": 1}
+
+
+async def test_stolen_lease_is_fully_functional(db, storage):
+    assert await db.lease("state/run-1", ttl=60, holder="w1") is not None
+    _expire(storage, "state/run-1")
+
+    thief = await db.lease("state/run-1", ttl=60, holder="w2")
+    assert thief.key == "state/run-1"
+    assert thief.ttl == 60
+    assert thief.holder == "w2"
+    assert thief.deadline_at > Timestamp.now()
+
+    # It renews against live storage and absorbs signals like any lease.
+    await db.signal("state/run-1", lambda s: {"cancel_requested": True})
+    await thief.renew()
+    assert thief.state == {"cancel_requested": True}
+
+
+async def test_signal_race_merges_rather_than_clobbers(db, storage):
+    # A competing signal lands between our signal's read and its CAS; we
+    # must lose the CAS, re-read, and write both signals merged.
+    await db.lease("state/run-1", ttl=60, holder="w1", state_fn=lambda s: {"n": 0})
+
+    def rival_signal():
+        signal_sync(storage, "state/run-1", lambda s: {**s, "other": 1})
+
+    with _interleave_before_next_put(storage, rival_signal):
+        written = await db.signal("state/run-1", lambda s: {**s, "cancel_requested": True})
+
+    assert written == {"n": 0, "other": 1, "cancel_requested": True}
 
 
 async def test_signal_observed_on_renew_without_fencing(db, storage):
@@ -304,3 +509,57 @@ async def test_document_delete_is_idempotent(db):
     await doc.delete()
     await doc.delete()
     assert await doc.get() is None
+
+
+async def test_document_create_race_converges_on_existing(db, storage):
+    # A competitor creates the document between our absent-read and our
+    # put-if-absent; we must lose the put and update their value instead.
+    doc = db.doc("counters/c")
+
+    def rival_creates():
+        storage.put_object_sync("counters/c", b'{"n": 100}', if_absent=True)
+
+    with _interleave_before_next_put(storage, rival_creates):
+        result = await doc.update(lambda v: {"n": v["n"] + 1}, create={"n": 0})
+
+    assert result == {"n": 101}
+
+
+async def test_document_update_persists_what_it_returns(db):
+    doc = db.doc("counters/c")
+    await doc.update(lambda v: v, create={"n": 0})
+    result = await doc.update(lambda v: {"n": v["n"] + 1})
+    value, _ = await doc.get()
+    assert value == result == {"n": 1}
+
+
+async def test_document_update_honors_max_attempts(db, storage):
+    doc = db.doc("counters/c")
+    await doc.update(lambda v: v, create={"n": 0})
+
+    original_put = storage.put_object_sync
+    contended = 0
+
+    def always_contended_put(key, data, **kwargs):
+        nonlocal contended
+        contended += 1
+        # A fresh competing write before every CAS attempt (distinct
+        # content each time — etags are content-derived).
+        original_put(key, json.dumps({"rival": contended}).encode())
+        return original_put(key, data, **kwargs)
+
+    attempts = 0
+
+    def bump(v):
+        nonlocal attempts
+        attempts += 1
+        return {"n": attempts}
+
+    storage.put_object_sync = always_contended_put
+    try:
+        with pytest.raises(CairnDBError):
+            await doc.update(bump, max_attempts=3)
+    finally:
+        storage.put_object_sync = original_put
+
+    assert attempts == 3
