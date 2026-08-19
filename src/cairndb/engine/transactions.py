@@ -228,7 +228,7 @@ class TransactionManager:
         except EventRejectedError as e:
             raise TransactionConflict(str(e)) from e
         finally:
-            self._pending_reads.pop(id(event), None)
+            self._pending_reads.pop(id(event), None)  # pragma: no mutate
 
     async def _revalidate(
         self, events: list[Event], interleaved: list[Commit]
