@@ -211,7 +211,7 @@ class Log:
         """
         number = after
         while True:
-            got_any = False
+            got_any = False  # pragma: no mutate (only read for truthiness)
             async for commit in self.read_commits(number):
                 number = commit.number
                 got_any = True
