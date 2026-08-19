@@ -73,6 +73,88 @@ async def test_objects_wait_for_timeout(db):
         await db.objects.wait_for("never/appears", timeout=0.05, poll_interval=0.01)
 
 
+def test_objects_sync_api_roundtrip(db):
+    etag = db.objects.put_sync("config/s", b"v1")
+    assert etag is not None
+    obj = db.objects.get_sync("config/s")
+    assert obj.data == b"v1"
+    assert obj.etag == etag
+
+    # Preconditions forward: put-if-absent, CAS, unconditional default.
+    assert db.objects.put_sync("config/s", b"v2", if_absent=True) is None
+    assert db.objects.put_sync("config/s", b"v2", if_match="wrong") is None
+    assert db.objects.put_sync("config/s", b"v2", if_match=etag) is not None
+    assert db.objects.put_sync("config/s", b"v3") is not None
+    assert db.objects.get_sync("config/s").data == b"v3"
+
+    db.objects.put_sync("other/t", b"x")
+    assert db.objects.list_sync("config/") == ["config/s"]
+    assert db.objects.list_sync() == ["config/s", "other/t"]
+
+    db.objects.delete_sync("config/s")
+    assert db.objects.get_sync("config/s") is None
+    db.objects.delete_sync("config/s")  # idempotent
+
+
+def test_objects_sync_api_rejects_reserved_prefixes(db):
+    with pytest.raises(ValueError):
+        db.objects.put_sync("log/x", b"")
+    with pytest.raises(ValueError):
+        db.objects.get_sync("snapshots/v1/x")
+    with pytest.raises(ValueError):
+        db.objects.delete_sync("logs/orders/log/x")
+
+
+async def test_objects_async_delete_and_list(db):
+    await db.objects.put("config/a", b"1")
+    await db.objects.put("other/b", b"2")
+    assert await db.objects.list("config/") == ["config/a"]
+    assert await db.objects.list() == ["config/a", "other/b"]
+
+    await db.objects.delete("config/a")
+    assert await db.objects.get("config/a") is None
+    with pytest.raises(ValueError):
+        await db.objects.delete("log/x")
+
+
+class _FakeClock:
+    """Deterministic monotonic clock + sleep, standing in for the time and
+    asyncio modules inside engine.objects, so wait_for's polling schedule
+    can be asserted exactly."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.slept = []
+
+    def monotonic(self):
+        return self.now
+
+    async def sleep(self, delay):
+        assert len(self.slept) < 200, "wait_for polled without making progress"
+        self.slept.append(delay)
+        self.now += delay
+
+
+async def test_wait_for_default_timeout_and_poll_interval(db, monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr("cairndb.engine.objects.time", clock)
+    monkeypatch.setattr("cairndb.engine.objects.asyncio", clock)
+
+    with pytest.raises(TimeoutError):
+        await db.objects.wait_for("never/appears")
+    assert clock.slept == [1.0] * 60  # 1s polls, 60s deadline, inclusive check
+
+
+async def test_wait_for_final_poll_shrinks_to_deadline(db, monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr("cairndb.engine.objects.time", clock)
+    monkeypatch.setattr("cairndb.engine.objects.asyncio", clock)
+
+    with pytest.raises(TimeoutError):
+        await db.objects.wait_for("never/appears", timeout=2.5, poll_interval=1.0)
+    assert clock.slept == [1.0, 1.0, 0.5]
+
+
 # ----------------------------------------------------------------------
 # NamespacedStorage
 # ----------------------------------------------------------------------
