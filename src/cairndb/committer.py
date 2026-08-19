@@ -124,7 +124,7 @@ class Committer:
         self._pending: deque[_Pending] = deque()
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
-        self._closed = False
+        self._closed = False  # pragma: no mutate (only read for truthiness)
         self._tail: int | None = None  # highest commit number known to exist
 
         logger.info(
@@ -193,7 +193,7 @@ class Committer:
 
         if self._task:
             await self._task
-            self._task = None
+            self._task = None  # pragma: no mutate (nothing reads _task after close)
 
         logger.info("committer_closed")
 
@@ -342,7 +342,7 @@ class Committer:
                 pending.event = decision
                 kept.append(pending)
 
-        if len(kept) < len(pendings):
+        if len(kept) < len(pendings):  # pragma: no mutate (guards a log line only)
             logger.info(
                 "events_rejected_by_revalidation",
                 rejected=len(pendings) - len(kept),

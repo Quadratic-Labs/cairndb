@@ -90,6 +90,15 @@ class TestBasicAppend:
         assert seq.commit == 2
 
     @pytest.mark.asyncio
+    async def test_tail_property_tracks_wins(self, storage):
+        async with Committer(storage) as committer:
+            assert committer.tail is None
+            await committer.append(make_event())
+            assert committer.tail == 1
+            await committer.append(make_event())
+            assert committer.tail == 2
+
+    @pytest.mark.asyncio
     async def test_append_after_close_raises(self, storage):
         committer = Committer(storage)
         await committer.close()
@@ -188,6 +197,28 @@ class TestGroupCommit:
         await committer.close()
 
     @pytest.mark.asyncio
+    async def test_batch_wait_sleeps_only_when_configured(self, storage, monkeypatch):
+        real_sleep = asyncio.sleep
+        slept = []
+
+        async def spy_sleep(delay):
+            slept.append(delay)
+            await real_sleep(0)
+
+        monkeypatch.setattr(asyncio, "sleep", spy_sleep)
+
+        # max_batch_wait_seconds=0 (the default) must not sleep at all.
+        async with Committer(storage) as committer:
+            await committer.append(make_event())
+        assert slept == []
+
+        # A positive wait sleeps exactly that long, once per batch.
+        config = CommitterConfig(max_batch_wait_seconds=0.02)
+        async with Committer(storage, config) as committer:
+            await committer.append(make_event())
+        assert slept == [0.02]
+
+    @pytest.mark.asyncio
     async def test_max_events_per_commit_splits_batches(self, storage):
         config = CommitterConfig(max_events_per_commit=3)
         async with Committer(storage, config) as committer:
@@ -230,6 +261,52 @@ class TestLostRaces:
 
         with pytest.raises(CommitError, match="attempts"):
             await committer.append(make_event())
+        await committer.close()
+
+    @pytest.mark.asyncio
+    async def test_attempts_are_counted_exactly(self, storage, monkeypatch):
+        calls = 0
+
+        async def always_lose(number, data):
+            nonlocal calls
+            calls += 1
+            return False
+
+        monkeypatch.setattr(storage, "put_commit", always_lose)
+
+        config = CommitterConfig(max_commit_attempts=3, lost_race_backoff_seconds=0.0)
+        committer = Committer(storage, config)
+        with pytest.raises(CommitError):
+            await committer.append(make_event())
+        assert calls == 3
+        await committer.close()
+
+    @pytest.mark.asyncio
+    async def test_lost_race_advance_keeps_tail_without_relisting(self, storage, monkeypatch):
+        """Advancing past interleaved commits updates the tail in place; the
+        next attempt must not fall back to a LIST rediscovery."""
+        other = Committer(storage)
+        for i in range(3):
+            await other.append(make_event(i, "other.event"))
+        await other.close()
+
+        committer = Committer(storage)
+        committer._tail = 0  # stale view forces a lost race
+
+        lists = 0
+        real_list = storage.list_commits
+
+        async def counting_list(after=0):
+            nonlocal lists
+            lists += 1
+            return await real_list(after=after)
+
+        monkeypatch.setattr(storage, "list_commits", counting_list)
+
+        seq = await committer.append(make_event(99))
+        assert seq.commit == 4
+        assert committer.tail == 4
+        assert lists == 0
         await committer.close()
 
     @pytest.mark.asyncio
@@ -297,12 +374,77 @@ class TestRevalidation:
         bad_task = asyncio.ensure_future(committer.append(make_event(3)))
 
         seq = await ok_task
-        with pytest.raises(EventRejectedError):
+        with pytest.raises(EventRejectedError, match="rejected by revalidation"):
             await bad_task
 
         assert seq.commit == 2
         events = await read_all_events(storage)
         assert [e.payload["n"] for _, e in events] == [0, 2]
+        await committer.close()
+
+    @pytest.mark.asyncio
+    async def test_append_many_waits_for_surviving_events(self, storage, monkeypatch):
+        """A rejection mid-batch must not make append_many return before the
+        surviving events are durable."""
+        other = Committer(storage)
+        await other.append(make_event(0, "other.event"))
+        await other.close()
+
+        async def reject_odd(events, interleaved):
+            return [None if e.payload["n"] % 2 else e for e in events]
+
+        committer = Committer(storage, revalidate=reject_odd)
+        committer._tail = 0  # force one lost race
+
+        release = asyncio.Event()
+        calls = 0
+        real_put = storage.put_commit
+
+        async def gated_put(number, data):
+            nonlocal calls
+            calls += 1
+            if calls == 2:  # the post-revalidation retry
+                await release.wait()
+            return await real_put(number, data)
+
+        monkeypatch.setattr(storage, "put_commit", gated_put)
+
+        task = asyncio.ensure_future(committer.append_many([make_event(2), make_event(3)]))
+        try:
+            await asyncio.sleep(0.05)
+            # The odd event is already rejected here, but the even one's
+            # commit is still in flight: no result yet.
+            assert not task.done()
+        finally:
+            release.set()
+
+        with pytest.raises(EventRejectedError):
+            await task
+        events = await read_all_events(storage)
+        assert [e.payload["n"] for _, e in events] == [0, 2]
+        await committer.close()
+
+    @pytest.mark.asyncio
+    async def test_flusher_survives_unexpected_commit_error(self, storage):
+        """An exception escaping the commit protocol fails the batch with
+        CommitError but never kills the flusher loop."""
+        other = Committer(storage)
+        await other.append(make_event(0, "other.event"))
+        await other.close()
+
+        async def broken_hook(events, interleaved):
+            raise ValueError("hook exploded")
+
+        committer = Committer(storage, revalidate=broken_hook)
+        committer._tail = 0  # force the lost race that trips the hook
+
+        with pytest.raises(CommitError, match="Unexpected commit failure"):
+            await asyncio.wait_for(committer.append(make_event(1)), timeout=5)
+
+        # The flusher survived: the next append (no race, hook not called)
+        # commits normally.
+        seq = await asyncio.wait_for(committer.append(make_event(2)), timeout=5)
+        assert seq.commit == 2
         await committer.close()
 
 
