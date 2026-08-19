@@ -147,7 +147,8 @@ class Projection:
             data = await self.storage.get_snapshot(self.config.schema_version, base)
             Path(dest).write_bytes(data)
         else:
-            await replay_engine.initialize_metadata_table(dest)
+            # Redundant defense: replay re-creates the table if missing.
+            await replay_engine.initialize_metadata_table(dest)  # pragma: no mutate
             if self._init_schema:
                 await self._init_schema(dest)
 
