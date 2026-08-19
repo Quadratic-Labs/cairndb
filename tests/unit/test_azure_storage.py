@@ -3,7 +3,12 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
+from azure.core import MatchConditions
+from azure.core.exceptions import (
+    ResourceExistsError,
+    ResourceModifiedError,
+    ResourceNotFoundError,
+)
 
 from cairndb.core.exceptions import StorageError
 
@@ -35,6 +40,45 @@ class TestInit:
 
         with pytest.raises(StorageError):
             AzureBlobStorage(container="c")
+
+    def test_prefix_strips_trailing_slash_only(self):
+        with patch("cairndb.storage.azure.BlobServiceClient"):
+            from cairndb.storage.azure import AzureBlobStorage
+
+            s = AzureBlobStorage(container="c", prefix="pX/", connection_string="cs")
+            assert s._prefix == "pX"
+
+    def test_connection_string_and_container_are_wired(self):
+        with patch("cairndb.storage.azure.BlobServiceClient") as service_cls:
+            from cairndb.storage.azure import AzureBlobStorage
+
+            AzureBlobStorage(container="tank", connection_string="cs")
+            service_cls.from_connection_string.assert_called_once_with("cs")
+            service = service_cls.from_connection_string.return_value
+            service.get_container_client.assert_called_once_with("tank")
+
+    def test_account_url_uses_default_azure_credential(self):
+        with (
+            patch("cairndb.storage.azure.BlobServiceClient") as service_cls,
+            patch("azure.identity.DefaultAzureCredential") as cred_cls,
+        ):
+            from cairndb.storage.azure import AzureBlobStorage
+
+            AzureBlobStorage(container="c", account_url="https://acct.blob.core.windows.net")
+            service_cls.assert_called_once_with(
+                account_url="https://acct.blob.core.windows.net",
+                credential=cred_cls.return_value,
+            )
+
+    @pytest.mark.asyncio
+    async def test_default_prefix_is_empty(self, mock_container):
+        from cairndb.storage.azure import AzureBlobStorage
+
+        bare = AzureBlobStorage(container="c", connection_string="cs")
+        blob = MagicMock()
+        mock_container.get_blob_client.return_value = blob
+        await bare.put_commit(1, b"d")
+        mock_container.get_blob_client.assert_called_once_with("log/000000000001.msgpack")
 
 
 class TestPutCommit:
@@ -76,6 +120,9 @@ class TestGetCommit:
         mock_container.get_blob_client.return_value = blob
 
         assert await storage.get_commit(42) == b"data"
+        mock_container.get_blob_client.assert_called_once_with(
+            "my/prefix/log/000000000042.msgpack"
+        )
 
     @pytest.mark.asyncio
     async def test_missing_commit_returns_none(self, storage, mock_container):
@@ -141,6 +188,20 @@ class TestSnapshots:
         mock_container.list_blobs.return_value = blobs
 
         assert await storage.find_latest_snapshot("1.0.0") == 40
+        mock_container.list_blobs.assert_called_once_with(
+            name_starts_with="my/prefix/snapshots/v1.0.0/"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_snapshot_returns_bytes(self, storage, mock_container):
+        blob = MagicMock()
+        blob.download_blob.return_value.readall.return_value = b"snap"
+        mock_container.get_blob_client.return_value = blob
+
+        assert await storage.get_snapshot("1.0.0", 40) == b"snap"
+        mock_container.get_blob_client.assert_called_once_with(
+            "my/prefix/snapshots/v1.0.0/000000000040.sqlite"
+        )
 
     @pytest.mark.asyncio
     async def test_get_missing_snapshot_raises(self, storage, mock_container):
@@ -165,9 +226,120 @@ class TestDeletion:
         deleted = await storage.delete_commits_before(4)
 
         assert deleted == 3
+        mock_container.list_blobs.assert_called_once_with(name_starts_with="my/prefix/log/")
         deleted_keys = [c.args[0] for c in mock_container.delete_blob.call_args_list]
         assert deleted_keys == [
             "my/prefix/log/000000000001.msgpack",
             "my/prefix/log/000000000002.msgpack",
             "my/prefix/log/000000000003.msgpack",
         ]
+
+    @pytest.mark.asyncio
+    async def test_delete_snapshots_before(self, storage, mock_container):
+        blobs = []
+        for n in (1, 2, 3, 4):
+            b = MagicMock()
+            b.name = f"my/prefix/snapshots/v1.0.0/{n:012d}.sqlite"
+            blobs.append(b)
+        junk = MagicMock()
+        junk.name = "my/prefix/snapshots/v1.0.0/notes.txt"
+        blobs.append(junk)
+        mock_container.list_blobs.return_value = blobs
+
+        deleted = await storage.delete_snapshots_before("1.0.0", 4)
+
+        assert deleted == 3
+        mock_container.list_blobs.assert_called_once_with(
+            name_starts_with="my/prefix/snapshots/v1.0.0/"
+        )
+        deleted_keys = [c.args[0] for c in mock_container.delete_blob.call_args_list]
+        assert deleted_keys == [
+            f"my/prefix/snapshots/v1.0.0/{n:012d}.sqlite" for n in (1, 2, 3)
+        ]
+
+
+class TestConditionalObjects:
+    def test_get_object_returns_data_and_etag(self, storage, mock_container):
+        blob = MagicMock()
+        downloader = blob.download_blob.return_value
+        downloader.readall.return_value = b"v"
+        downloader.properties.etag = '"abc"'
+        mock_container.get_blob_client.return_value = blob
+
+        obj = storage.get_object_sync("state/x")
+        assert obj.data == b"v"
+        assert obj.etag == '"abc"'
+        mock_container.get_blob_client.assert_called_once_with("my/prefix/state/x")
+
+    def test_get_missing_object_returns_none(self, storage, mock_container):
+        blob = MagicMock()
+        blob.download_blob.side_effect = ResourceNotFoundError("missing")
+        mock_container.get_blob_client.return_value = blob
+        assert storage.get_object_sync("state/x") is None
+
+    def test_put_unconditional(self, storage, mock_container):
+        blob = MagicMock()
+        blob.upload_blob.return_value = {"etag": '"e1"'}
+        mock_container.get_blob_client.return_value = blob
+
+        assert storage.put_object_sync("state/x", b"v") == '"e1"'
+        mock_container.get_blob_client.assert_called_once_with("my/prefix/state/x")
+        blob.upload_blob.assert_called_once_with(b"v", overwrite=True)
+
+    def test_put_if_match_maps_to_if_not_modified(self, storage, mock_container):
+        blob = MagicMock()
+        blob.upload_blob.return_value = {"etag": '"e2"'}
+        mock_container.get_blob_client.return_value = blob
+
+        assert storage.put_object_sync("state/x", b"v", if_match='"e1"') == '"e2"'
+        blob.upload_blob.assert_called_once_with(
+            b"v",
+            overwrite=True,
+            etag='"e1"',
+            match_condition=MatchConditions.IfNotModified,
+        )
+
+    def test_put_if_absent_maps_to_no_overwrite(self, storage, mock_container):
+        blob = MagicMock()
+        blob.upload_blob.return_value = {"etag": '"e1"'}
+        mock_container.get_blob_client.return_value = blob
+
+        assert storage.put_object_sync("state/x", b"v", if_absent=True) == '"e1"'
+        blob.upload_blob.assert_called_once_with(b"v", overwrite=False)
+
+    def test_put_precondition_failures_return_none(self, storage, mock_container):
+        blob = MagicMock()
+        mock_container.get_blob_client.return_value = blob
+
+        blob.upload_blob.side_effect = ResourceExistsError("exists")
+        assert storage.put_object_sync("s/x", b"v", if_absent=True) is None
+
+        blob.upload_blob.side_effect = ResourceModifiedError("modified")
+        assert storage.put_object_sync("s/x", b"v", if_match='"e"') is None
+
+        # if_match on a blob deleted in the meantime: precondition failed.
+        blob.upload_blob.side_effect = ResourceNotFoundError("gone")
+        assert storage.put_object_sync("s/x", b"v", if_match='"e"') is None
+
+    def test_put_both_preconditions_rejected(self, storage):
+        with pytest.raises(ValueError):
+            storage.put_object_sync("s/x", b"v", if_match='"e"', if_absent=True)
+
+    def test_delete_object_and_missing_noop(self, storage, mock_container):
+        blob = MagicMock()
+        mock_container.get_blob_client.return_value = blob
+        storage.delete_object_sync("state/x")
+        mock_container.get_blob_client.assert_called_once_with("my/prefix/state/x")
+        blob.delete_blob.assert_called_once_with()
+
+        blob.delete_blob.side_effect = ResourceNotFoundError("missing")
+        storage.delete_object_sync("state/x")  # no-op
+
+    def test_list_objects_strips_prefix(self, storage, mock_container):
+        blobs = [MagicMock(), MagicMock()]
+        blobs[0].name = "my/prefix/state/x"
+        blobs[1].name = "my/prefix/config/a"
+        mock_container.list_blobs.return_value = blobs
+
+        assert storage.list_objects_sync() == ["config/a", "state/x"]
+        mock_container.list_blobs.assert_called_once_with(name_starts_with="my/prefix/")
