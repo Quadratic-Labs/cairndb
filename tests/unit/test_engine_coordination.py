@@ -89,7 +89,22 @@ async def test_claim_sync_twin(db):
     result = db.claim_sync("dispatch/sync", {"v": 1})
     assert result.won
     assert result.key == "dispatch/sync"
+    assert result.value == {"v": 1}
     assert not db.claim_sync("dispatch/sync", {"v": 2}).won
+
+
+async def test_lease_sync_facade(db, storage):
+    lease = db.lease_sync("state/run-1", ttl=60, holder="w1", state_fn=lambda s: {"n": 0})
+    assert lease is not None
+    assert lease.holder == "w1"
+    assert lease.state == {"n": 0}
+    assert db.lease_sync("state/run-1", ttl=60, holder="w2") is None  # actively held
+
+    _expire(storage, "state/run-1")
+    assert db.lease_sync("state/run-1", ttl=60, holder="w2", steal_if_expired=False) is None
+    thief = db.lease_sync("state/run-1", ttl=60, holder="w2")  # steals by default
+    assert thief is not None
+    assert thief.epoch == 2
 
 
 async def test_claim_rejects_reserved_prefix(db):
