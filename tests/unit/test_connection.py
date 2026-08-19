@@ -10,44 +10,40 @@ import pytest
 from sqlalchemy import text
 
 from cairndb.client.config import ClientConfig
-from cairndb.client.connection import CairnDBClient, _create_storage
+from cairndb.client.connection import CairnDBClient
 from cairndb.client.registry import HandlerRegistry
+from cairndb.storage.config import FilesystemStorageConfig, S3StorageConfig
 
 # ---------------------------------------------------------------------------
-# _create_storage factory
+# ClientConfig.create_storage
 # ---------------------------------------------------------------------------
 
 
 def test_create_storage_filesystem():
-    """Filesystem storage is created when type is 'filesystem'."""
+    """Filesystem storage is created from a FilesystemStorageConfig."""
     config = ClientConfig(
-        storage_type="filesystem",
-        storage_path="/tmp/test_storage",
+        storage=FilesystemStorageConfig(path="/tmp/test_storage"),
     )
-    storage = _create_storage(config)
+    storage = config.create_storage()
 
     from cairndb.storage.filesystem import FilesystemStorage
 
     assert isinstance(storage, FilesystemStorage)
 
 
-def test_create_storage_missing_path_raises():
-    """Filesystem storage without path raises ValueError."""
-    config = ClientConfig(
-        storage_type="filesystem",
-        storage_path=None,
-    )
-    with pytest.raises(ValueError, match="filesystem storage requires"):
-        _create_storage(config)
+def test_create_storage_without_storage_config_raises():
+    """create_storage without a storage config raises ValueError."""
+    config = ClientConfig()
+    with pytest.raises(ValueError, match="no storage configured"):
+        config.create_storage()
 
 
 def test_create_storage_s3():
-    """S3 storage is created when type is 's3'."""
+    """S3 storage is created from an S3StorageConfig."""
     config = ClientConfig(
-        storage_type="s3",
-        storage_bucket="my-bucket",
+        storage=S3StorageConfig(bucket="my-bucket"),
     )
-    storage = _create_storage(config)
+    storage = config.create_storage()
 
     from cairndb.storage.s3 import S3Storage
 
@@ -62,8 +58,7 @@ def test_create_storage_s3():
 def test_client_init():
     """Client can be instantiated with valid config."""
     config = ClientConfig(
-        storage_type="filesystem",
-        storage_path="/tmp/test_storage",
+        storage=FilesystemStorageConfig(path="/tmp/test_storage"),
         db_path="/tmp/test.db",
     )
     registry = HandlerRegistry()
@@ -90,8 +85,7 @@ async def test_ensure_engine_creates_engine():
             await db.commit()
 
         config = ClientConfig(
-            storage_type="filesystem",
-            storage_path=temp_dir,
+            storage=FilesystemStorageConfig(path=temp_dir),
             db_path=db_path,
         )
         registry = HandlerRegistry()
@@ -112,8 +106,7 @@ async def test_ensure_engine_raises_when_no_db():
     """_ensure_engine raises FileNotFoundError when projection is missing."""
     with tempfile.TemporaryDirectory() as temp_dir:
         config = ClientConfig(
-            storage_type="filesystem",
-            storage_path=temp_dir,
+            storage=FilesystemStorageConfig(path=temp_dir),
             db_path=str(Path(temp_dir) / "nonexistent.db"),
         )
         registry = HandlerRegistry()
@@ -134,8 +127,7 @@ async def test_reconnect_on_mtime_change():
             await db.commit()
 
         config = ClientConfig(
-            storage_type="filesystem",
-            storage_path=temp_dir,
+            storage=FilesystemStorageConfig(path=temp_dir),
             db_path=db_path,
         )
         registry = HandlerRegistry()
@@ -173,8 +165,7 @@ async def test_stop_disposes_engine():
             await db.commit()
 
         config = ClientConfig(
-            storage_type="filesystem",
-            storage_path=temp_dir,
+            storage=FilesystemStorageConfig(path=temp_dir),
             db_path=db_path,
         )
         registry = HandlerRegistry()
@@ -206,8 +197,7 @@ async def test_get_session_yields_session():
             await db.commit()
 
         config = ClientConfig(
-            storage_type="filesystem",
-            storage_path=temp_dir,
+            storage=FilesystemStorageConfig(path=temp_dir),
             db_path=db_path,
         )
         registry = HandlerRegistry()
@@ -226,8 +216,7 @@ async def test_get_session_raises_when_no_db():
     """get_session raises FileNotFoundError when the projection is missing."""
     with tempfile.TemporaryDirectory() as temp_dir:
         config = ClientConfig(
-            storage_type="filesystem",
-            storage_path=temp_dir,
+            storage=FilesystemStorageConfig(path=temp_dir),
             db_path=str(Path(temp_dir) / "missing.db"),
         )
         registry = HandlerRegistry()
@@ -260,8 +249,7 @@ async def test_is_running_reflects_updater_state():
             await db.commit()
 
         config = ClientConfig(
-            storage_type="filesystem",
-            storage_path=temp_dir,
+            storage=FilesystemStorageConfig(path=temp_dir),
             db_path=db_path,
         )
         registry = HandlerRegistry()

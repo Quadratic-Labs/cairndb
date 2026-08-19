@@ -97,8 +97,12 @@ lease = await db.lease("state/etl/run-123", ttl=120,
 
 lease.epoch                                # monotonic fence token, bumped per acquisition
 await lease.renew()                        # CAS; raises LeaseLost if fenced
-await lease.write({"progress": 0.5})       # guarded payload update
+await lease.write({"progress": 0.5})       # guarded payload replace (discards signals)
+await lease.update_state(lambda s: {**s, "progress": 0.5})  # guarded RMW (preserves signals)
 await lease.release(state={"status": "completed"})
+
+# from outside the lease — cooperative signal to the holder, no fencing:
+await db.signal("state/etl/run-123", lambda s: {**(s or {}), "cancel_requested": True})
 ```
 
 Semantics:
@@ -109,6 +113,12 @@ Semantics:
 - Every write through the lease is etag-guarded. A holder that was fenced
   (its lease expired and was stolen) gets `LeaseLost` on its next write and
   must discard its outcome — Flowlet's worker contract, verbatim.
+- `db.signal(key, fn)` CAS-updates only the `state` field, preserving epoch,
+  holder and deadline — the holder is *signaled*, not fenced. Its next
+  `renew`/`update_state` absorbs the fresh state before writing, so the
+  signal shows up on `lease.state`. A heartbeat of `renew` + `lease.state`
+  checks is the holder side of a cooperative cancel protocol; plain
+  `write` replaces state unconditionally and discards unread signals.
 - Expiry is judged against the holder-written `deadline_at`; clocks only
   need to agree to within the ttl (choose generous ttls).
 
@@ -117,7 +127,7 @@ Semantics:
 The CAS read-modify-write loop everyone hand-rolls:
 
 ```python
-counters = db.doc("queues/default", model=QueueState)   # pydantic model, or raw dict
+counters = db.doc("queues/default", model=QueueState)   # model class (pydantic-compatible), or raw dict
 state = await counters.update(lambda q: q.bump())        # retries on conflict
 value_etag = await counters.get()                        # (value, etag) | None
 await counters.delete()

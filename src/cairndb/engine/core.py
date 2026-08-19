@@ -62,7 +62,7 @@ class CairnDB:
         if isinstance(config, StorageConfig):
             storage_config = config
         else:
-            storage_config = StorageConfig(**config.get("storage", config))
+            storage_config = StorageConfig.from_dict(config.get("storage", config))
         return cls(storage_config.create_storage())
 
     # ------------------------------------------------------------------
@@ -111,6 +111,18 @@ class CairnDB:
             self.storage, key, ttl=ttl, holder=holder,
             steal_if_expired=steal_if_expired, state_fn=state_fn,
         )
+
+    async def signal(self, key: str, state_fn: Callable[[Any], Any]) -> Any | None:
+        """Write a cooperative signal into the lease on `key` from outside
+        the lease (e.g. a cancel flag); the holder is not fenced and sees
+        the new state on its next ``renew``/``update_state``. Returns the
+        state written, or None when no lease document exists.
+        """
+        return await coordination.signal(self.storage, key, state_fn)
+
+    def signal_sync(self, key: str, state_fn: Callable[[Any], Any]) -> Any | None:
+        """Sync twin of :meth:`signal`."""
+        return coordination.signal_sync(self.storage, key, state_fn)
 
     def doc(self, key: str, model: type | None = None) -> Document:
         """A typed, etag-guarded document with a read-modify-write loop."""

@@ -19,8 +19,9 @@ from sqlalchemy import select
 
 from cairndb.client.config import ClientConfig
 from cairndb.client.connection import CairnDBClient
-from examples.simple_app.models import Base, User
+from cairndb.storage.config import FilesystemStorageConfig
 from examples.simple_app.handlers import registry
+from examples.simple_app.models import Base, User
 
 # ---------------------------------------------------------------------------
 # Configuration — must match the writer's STORAGE_PATH
@@ -32,8 +33,7 @@ DB_PATH = "./projection.db"
 
 async def main() -> None:
     config = ClientConfig(
-        storage_type="filesystem",
-        storage_path=STORAGE_PATH,
+        storage=FilesystemStorageConfig(path=STORAGE_PATH),
         db_path=DB_PATH,
         poll_interval_seconds=2.0,
     )

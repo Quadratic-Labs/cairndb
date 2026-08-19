@@ -116,10 +116,10 @@ async def test_end_to_end_concurrent_writers_snapshot_and_fresh_reader(temp_dir)
 
     # --- Fresh reader bootstraps (snapshot + tail) -----------------------
     from cairndb.client.config import ClientConfig
+    from cairndb.storage.config import FilesystemStorageConfig
 
     reader_config = ClientConfig(
-        storage_type="filesystem",
-        storage_path=str(ledger),
+        storage=FilesystemStorageConfig(path=str(ledger)),
         db_path=str(temp_dir / "reader.db"),
         poll_interval_seconds=0.1,
     )

@@ -2,8 +2,8 @@
 
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import NewType
+from datetime import UTC, datetime, timedelta
+from typing import NewType, overload
 
 _SEQUENCE_RE = re.compile(r"^(\d{12}):(\d{6})$")
 
@@ -51,16 +51,27 @@ EventType = NewType("EventType", str)
 SchemaVersion = NewType("SchemaVersion", str)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class Timestamp:
     """
-    Immutable timestamp wrapper with timezone awareness.
+    Immutable UTC timestamp value type.
 
-    All timestamps are stored in UTC. Timestamps are informational
-    (effective/valid-from time); ordering never depends on them.
+    Every construction path normalizes to UTC: naive datetimes are assumed
+    UTC, aware ones are converted. Instances order among themselves,
+    subtract to a ``timedelta``, and shift by a ``timedelta`` — so deadline
+    arithmetic never has to unwrap ``value``.
+
+    Timestamps are informational (effective/valid-from time); record
+    ordering in the log never depends on them — use identifiers for that.
     """
 
     value: datetime
+
+    def __post_init__(self) -> None:
+        if self.value.tzinfo is None:
+            object.__setattr__(self, "value", self.value.replace(tzinfo=UTC))
+        else:
+            object.__setattr__(self, "value", self.value.astimezone(UTC))
 
     @classmethod
     def now(cls) -> Timestamp:
@@ -69,24 +80,41 @@ class Timestamp:
 
     @classmethod
     def from_datetime(cls, dt: datetime) -> Timestamp:
-        """Create from datetime, converting to UTC if needed."""
-        if dt.tzinfo is None:
-            # Assume UTC if no timezone specified
-            dt = dt.replace(tzinfo=UTC)
-        else:
-            # Convert to UTC
-            dt = dt.astimezone(UTC)
+        """Create from datetime; the constructor normalizes to UTC."""
         return cls(dt)
 
     @classmethod
     def from_iso(cls, iso_string: str) -> Timestamp:
         """Parse from ISO 8601 format string."""
-        dt = datetime.fromisoformat(iso_string)
-        return cls.from_datetime(dt)
+        return cls(datetime.fromisoformat(iso_string))
+
+    def __add__(self, other: object) -> Timestamp:
+        if not isinstance(other, timedelta):
+            return NotImplemented
+        return Timestamp(self.value + other)
+
+    __radd__ = __add__
+
+    @overload
+    def __sub__(self, other: timedelta) -> Timestamp: ...
+    @overload
+    def __sub__(self, other: Timestamp) -> timedelta: ...
+
+    def __sub__(self, other: object) -> Timestamp | timedelta:
+        if isinstance(other, timedelta):
+            return Timestamp(self.value - other)
+        if isinstance(other, Timestamp):
+            return self.value - other.value
+        return NotImplemented
 
     def to_iso(self) -> str:
-        """Convert to ISO 8601 format string."""
-        return self.value.isoformat()
+        """Canonical RFC 3339 form: fixed-width microseconds, 'Z' suffix.
+
+        Fixed-width so the form sorts lexicographically as it sorts
+        chronologically. Parsing (`from_iso`) stays lenient: any ISO 8601
+        offset, 'Z', or a naive string (assumed UTC) is accepted.
+        """
+        return self.value.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
     def __str__(self) -> str:
         """String representation in ISO format."""

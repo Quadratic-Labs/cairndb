@@ -1,47 +1,42 @@
 """Blob storage abstraction for CairnDB."""
 
-from cairndb.core.exceptions import ConfigurationError
+from typing import Any
+
 from cairndb.storage.base import BlobStorage, StoredObject
+from cairndb.storage.config import (
+    AzureStorageConfig,
+    FilesystemStorageConfig,
+    GCSStorageConfig,
+    S3StorageConfig,
+    StorageConfig,
+)
 
 
-def create_storage(storage_type: str, **kwargs) -> BlobStorage:
+def create_storage(storage_type: str, **kwargs: Any) -> BlobStorage:
     """
     Factory — create a storage backend from its type name.
 
     Args:
         storage_type: One of "filesystem", "s3", "azure", "gcs"
-        **kwargs: Backend-specific options passed directly to the constructor.
-                  See each backend class for the full parameter list.
+        **kwargs: Fields of the matching StorageConfig subclass.
 
     Returns:
         A configured BlobStorage instance
 
     Raises:
         ConfigurationError: If storage_type is unknown
+        ValueError: If the fields are invalid for the selected backend
     """
-    if storage_type == "filesystem":
-        from cairndb.storage.filesystem import FilesystemStorage
-
-        return FilesystemStorage(kwargs["path"])
-
-    if storage_type == "s3":
-        from cairndb.storage.s3 import S3Storage
-
-        return S3Storage(**kwargs)
-
-    if storage_type == "azure":
-        from cairndb.storage.azure import AzureBlobStorage
-
-        return AzureBlobStorage(**kwargs)
-
-    if storage_type == "gcs":
-        from cairndb.storage.gcs import GCSStorage
-
-        return GCSStorage(**kwargs)
-
-    raise ConfigurationError(f"Unknown storage type: '{storage_type}'")
+    return StorageConfig.from_dict({"type": storage_type, **kwargs}).create_storage()
 
 
-from cairndb.storage.config import StorageConfig
-
-__all__ = ["BlobStorage", "StorageConfig", "StoredObject", "create_storage"]
+__all__ = [
+    "AzureStorageConfig",
+    "BlobStorage",
+    "FilesystemStorageConfig",
+    "GCSStorageConfig",
+    "S3StorageConfig",
+    "StorageConfig",
+    "StoredObject",
+    "create_storage",
+]

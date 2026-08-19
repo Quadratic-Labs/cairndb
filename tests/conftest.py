@@ -12,6 +12,7 @@ from cairndb.client.registry import HandlerRegistry
 from cairndb.committer import Committer
 from cairndb.core.log import Event
 from cairndb.core.types import EventType, SchemaVersion, SequenceNumber, Timestamp
+from cairndb.storage.config import FilesystemStorageConfig
 from cairndb.storage.filesystem import FilesystemStorage
 
 
@@ -115,8 +116,7 @@ def storage(temp_dir):
 def client_config(temp_dir):
     """Client config pointing at the temp ledger and projection."""
     return ClientConfig(
-        storage_type="filesystem",
-        storage_path=str(temp_dir / "ledger"),
+        storage=FilesystemStorageConfig(path=str(temp_dir / "ledger")),
         db_path=str(temp_dir / "projection.db"),
         poll_interval_seconds=0.1,
     )

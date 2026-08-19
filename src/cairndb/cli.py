@@ -133,14 +133,13 @@ def rebuild(
     Client settings (db path, storage) come from CAIRNDB_* env vars.
     """
     from cairndb.client.config import ClientConfig
-    from cairndb.client.connection import _create_storage
     from cairndb.client.projector import Projector
 
     registry = _load_ref(handlers)
     initializer = _load_ref(init_schema) if init_schema else None
 
     config = ClientConfig.from_env()
-    storage = _create_storage(config)
+    storage = config.create_storage()
     projector = Projector(config, storage, registry, init_schema=initializer)
 
     last = asyncio.run(projector.rebuild_from_scratch())

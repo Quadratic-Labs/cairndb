@@ -108,6 +108,18 @@ class TestTimestamp:
         parsed = Timestamp.from_iso(str_repr)
         assert abs((ts.value - parsed.value).total_seconds()) < 0.000001
 
+    def test_iso_form_is_canonical(self):
+        """Same instant, any input form → one fixed-width 'Z' string."""
+        forms = [
+            "2024-01-15T12:00:00Z",
+            "2024-01-15T12:00:00+00:00",
+            "2024-01-15T13:00:00+01:00",
+            "2024-01-15T12:00:00",  # naive, assumed UTC
+        ]
+        outputs = {Timestamp.from_iso(f).to_iso() for f in forms}
+        assert outputs == {"2024-01-15T12:00:00.000000Z"}
+        assert len(Timestamp.now().to_iso()) == len("2024-01-15T12:00:00.000000Z")
+
     def test_timestamp_immutable(self):
         """Test that timestamps are immutable."""
         ts = Timestamp.now()

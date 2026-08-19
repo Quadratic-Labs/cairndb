@@ -23,7 +23,6 @@ import aiosqlite
 import structlog
 
 from cairndb.client.config import ClientConfig
-from cairndb.client.connection import _create_storage
 from cairndb.client.demo_handlers import init_schema, registry
 from cairndb.client.updater import BackgroundUpdater
 from cairndb.committer import Committer
@@ -45,7 +44,7 @@ async def _count_events(db_path: str) -> int:
 
 async def run_demo() -> None:
     config = ClientConfig.from_env()
-    storage = _create_storage(config)
+    storage = config.create_storage()
 
     await init_schema(config.db_path)
 

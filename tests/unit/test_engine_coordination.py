@@ -1,12 +1,13 @@
 """Unit tests for the engine's coordination layer: claim, Lease, Document."""
 
-from datetime import UTC, datetime, timedelta
+import json
+from datetime import timedelta
 
 import pytest
-from pydantic import BaseModel
 
 from cairndb import CairnDB, LeaseLost
 from cairndb.core.exceptions import CairnDBError
+from cairndb.core.types import Timestamp
 
 
 @pytest.fixture
@@ -82,7 +83,7 @@ async def test_expired_lease_is_stolen_and_fences_old_holder(db, storage):
 
     # Force expiry by rewriting the deadline into the past (simulates a
     # crashed holder whose ttl elapsed).
-    past = datetime.now(UTC) - timedelta(seconds=1)
+    past = Timestamp.now() - timedelta(seconds=1)
     obj = storage.get_object_sync("state/run-1")
     doc = lease._parse(obj.data)
     storage.put_object_sync(
@@ -104,7 +105,7 @@ async def test_expired_lease_is_stolen_and_fences_old_holder(db, storage):
 
 async def test_expired_lease_not_stolen_when_disabled(db, storage):
     lease = await db.lease("state/run-1", ttl=60, holder="w1")
-    past = datetime.now(UTC) - timedelta(seconds=1)
+    past = Timestamp.now() - timedelta(seconds=1)
     obj = storage.get_object_sync("state/run-1")
     doc = lease._parse(obj.data)
     storage.put_object_sync(
@@ -115,6 +116,60 @@ async def test_expired_lease_not_stolen_when_disabled(db, storage):
     assert await db.lease("state/run-1", ttl=60, steal_if_expired=False) is None
 
 
+async def test_signal_observed_on_renew_without_fencing(db, storage):
+    # A signal moves the document's etag, so the holder's next guarded
+    # write necessarily loses its CAS; it must absorb the signal and
+    # retry, not raise LeaseLost or clobber the signal unread.
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+    assert await db.signal("state/run-1", lambda s: {"cancel_requested": True}) == {
+        "cancel_requested": True
+    }
+
+    await lease.renew()
+    assert lease.state == {"cancel_requested": True}
+    assert lease.epoch == 1  # signaled, not fenced
+
+    # The signal also survived in storage, and the lease still works.
+    doc = json.loads(storage.get_object_sync("state/run-1").data)
+    assert doc["state"] == {"cancel_requested": True}
+    await lease.release()
+
+
+async def test_signal_on_missing_lease_returns_none(db):
+    assert await db.signal("state/nope", lambda s: {"x": 1}) is None
+
+
+async def test_update_state_merges_concurrent_signal(db):
+    lease = await db.lease(
+        "state/run-1", ttl=60, holder="w1", state_fn=lambda s: {"progress": 0}
+    )
+    await db.signal("state/run-1", lambda s: {**s, "cancel_requested": True})
+
+    # The holder's stale self.state has no flag; update_state must apply
+    # fn to the absorbed fresh state so both writes survive.
+    written = await lease.update_state(lambda s: {**s, "progress": 1})
+    assert written == {"progress": 1, "cancel_requested": True}
+    assert lease.state == written
+
+
+async def test_write_deliberately_discards_signal(db):
+    # Plain write replaces state unconditionally — documented behavior;
+    # cooperating holders use renew/update_state instead.
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+    await db.signal("state/run-1", lambda s: {"cancel_requested": True})
+    await lease.write({"progress": 0.5})
+    assert lease.state == {"progress": 0.5}
+
+
+async def test_release_preserves_signaled_state(db):
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+    await db.signal("state/run-1", lambda s: {"cancel_requested": True})
+    await lease.release()  # no explicit state: freshest state kept
+
+    again = await db.lease("state/run-1", ttl=60, holder="w2")
+    assert again.state == {"cancel_requested": True}
+
+
 async def test_lease_write_updates_state(db):
     lease = await db.lease("state/run-1", ttl=60)
     await lease.write({"progress": 0.5})
@@ -123,7 +178,9 @@ async def test_lease_write_updates_state(db):
 
 async def test_lease_state_fn_seeds_fresh_state(db):
     lease = await db.lease(
-        "state/run-1", ttl=60, holder="w1",
+        "state/run-1",
+        ttl=60,
+        holder="w1",
         state_fn=lambda s: {"attempt": 1} if s is None else s,
     )
     assert lease is not None
@@ -132,13 +189,17 @@ async def test_lease_state_fn_seeds_fresh_state(db):
 
 async def test_lease_state_fn_transitions_on_reacquire(db):
     first = await db.lease(
-        "state/run-1", ttl=60, holder="w1",
+        "state/run-1",
+        ttl=60,
+        holder="w1",
         state_fn=lambda s: {"attempt": 1},
     )
     await first.release()
 
     second = await db.lease(
-        "state/run-1", ttl=60, holder="w2",
+        "state/run-1",
+        ttl=60,
+        holder="w2",
         state_fn=lambda s: {"attempt": s["attempt"] + 1},
     )
     assert second is not None
@@ -181,14 +242,24 @@ async def test_lease_state_fn_not_applied_when_held(db):
 # ----------------------------------------------------------------------
 
 
-class QueueState(BaseModel):
-    inflight: int = 0
+class QueueState:
+    """Pydantic-model-shaped stub: Document only needs the model_*_json pair."""
+
+    def __init__(self, inflight: int = 0):
+        self.inflight = inflight
+
+    def model_dump_json(self) -> str:
+        return json.dumps({"inflight": self.inflight})
+
+    @classmethod
+    def model_validate_json(cls, data: bytes) -> QueueState:
+        return cls(**json.loads(data))
 
 
 async def test_document_update_creates_from_initial(db):
     doc = db.doc("queues/default", model=QueueState)
     state = await doc.update(
-        lambda q: q.model_copy(update={"inflight": q.inflight + 1}),
+        lambda q: QueueState(inflight=q.inflight + 1),
         create=QueueState(),
     )
     assert state.inflight == 1

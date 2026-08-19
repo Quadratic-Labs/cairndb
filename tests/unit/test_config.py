@@ -3,40 +3,52 @@
 import pytest
 
 from cairndb.client.config import ClientConfig
-from cairndb.storage.config import StorageConfig
+from cairndb.core.exceptions import ConfigurationError
+from cairndb.storage.config import (
+    AzureStorageConfig,
+    FilesystemStorageConfig,
+    GCSStorageConfig,
+    S3StorageConfig,
+    StorageConfig,
+)
 
 
 class TestStorageConfig:
-    def test_default_is_filesystem(self):
-        config = StorageConfig()
-        assert config.type == "filesystem"
+    def test_from_dict_defaults_to_filesystem(self, temp_dir):
+        config = StorageConfig.from_dict({"path": str(temp_dir)})
+        assert isinstance(config, FilesystemStorageConfig)
+
+    def test_from_dict_unknown_type(self):
+        with pytest.raises(ConfigurationError, match="Unknown storage type"):
+            StorageConfig.from_dict({"type": "ftp"})
+
+    def test_from_dict_rejects_foreign_fields(self):
+        with pytest.raises(ValueError, match="s3"):
+            StorageConfig.from_dict({"type": "s3", "bucket": "b", "container": "c"})
 
     def test_filesystem_requires_path(self):
-        config = StorageConfig(type="filesystem")
         with pytest.raises(ValueError, match="path"):
-            config.validate_config()
+            FilesystemStorageConfig(path="")
 
     def test_s3_requires_bucket(self):
-        config = StorageConfig(type="s3")
         with pytest.raises(ValueError, match="bucket"):
-            config.validate_config()
+            S3StorageConfig(bucket="")
 
     def test_azure_requires_container_and_credentials(self):
         with pytest.raises(ValueError, match="container"):
-            StorageConfig(type="azure").validate_config()
+            AzureStorageConfig(container="", connection_string="cs")
 
         with pytest.raises(ValueError, match="connection_string"):
-            StorageConfig(type="azure", container="c").validate_config()
+            AzureStorageConfig(container="c")
 
     def test_gcs_requires_bucket(self):
-        config = StorageConfig(type="gcs")
         with pytest.raises(ValueError, match="bucket"):
-            config.validate_config()
+            GCSStorageConfig(bucket="")
 
     def test_create_storage_filesystem(self, temp_dir):
         from cairndb.storage.filesystem import FilesystemStorage
 
-        config = StorageConfig(type="filesystem", path=str(temp_dir))
+        config = FilesystemStorageConfig(path=str(temp_dir))
         storage = config.create_storage()
 
         assert isinstance(storage, FilesystemStorage)
@@ -48,16 +60,23 @@ class TestStorageConfig:
 
         config = StorageConfig.from_env()
 
-        assert config.type == "s3"
+        assert isinstance(config, S3StorageConfig)
         assert config.bucket == "my-bucket"
         assert config.prefix == "app1"
+
+    def test_from_env_missing_required_field(self, monkeypatch):
+        monkeypatch.setenv("CAIRNDB_STORAGE_TYPE", "filesystem")
+        monkeypatch.delenv("CAIRNDB_STORAGE_PATH", raising=False)
+
+        with pytest.raises(ValueError, match="path"):
+            StorageConfig.from_env()
 
 
 class TestClientConfig:
     def test_defaults(self):
         config = ClientConfig()
 
-        assert config.storage_type == "filesystem"
+        assert config.storage is None
         assert config.db_path == "./projection.db"
         assert config.poll_interval_seconds == 5.0
         assert config.schema_version == "1.0.0"
@@ -66,15 +85,14 @@ class TestClientConfig:
         config = ClientConfig(db_path="/data/proj.db")
         assert config.new_db_path == "/data/proj.db.new"
 
-    def test_validate_storage_filesystem_requires_path(self):
-        config = ClientConfig(storage_type="filesystem")
-        with pytest.raises(ValueError, match="storage_path"):
-            config.validate_storage()
+    def test_create_storage_requires_storage(self):
+        config = ClientConfig()
+        with pytest.raises(ValueError, match="storage"):
+            config.create_storage()
 
-    def test_validate_storage_s3_requires_bucket(self):
-        config = ClientConfig(storage_type="s3")
-        with pytest.raises(ValueError, match="storage_bucket"):
-            config.validate_storage()
+    def test_poll_interval_bounds(self):
+        with pytest.raises(ValueError, match="poll_interval_seconds"):
+            ClientConfig(poll_interval_seconds=0.0)
 
     def test_from_env(self, monkeypatch):
         monkeypatch.setenv("CAIRNDB_STORAGE_TYPE", "filesystem")
@@ -85,13 +103,16 @@ class TestClientConfig:
 
         config = ClientConfig.from_env()
 
-        assert config.storage_path == "/data/ledger"
+        assert isinstance(config.storage, FilesystemStorageConfig)
+        assert config.storage.path == "/data/ledger"
         assert config.db_path == "/data/proj.db"
         assert config.poll_interval_seconds == 2.5
         assert config.schema_version == "2.0.0"
 
     def test_from_dict(self):
         config = ClientConfig.from_dict(
-            {"storage_type": "filesystem", "storage_path": "/x", "db_path": "/y.db"}
+            {"storage": {"type": "filesystem", "path": "/x"}, "db_path": "/y.db"}
         )
-        assert config.storage_path == "/x"
+        assert isinstance(config.storage, FilesystemStorageConfig)
+        assert config.storage.path == "/x"
+        assert config.db_path == "/y.db"

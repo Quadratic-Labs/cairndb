@@ -24,9 +24,6 @@ dependencies = [
     # Serialization
     "msgpack>=1.0.0",
 
-    # Configuration
-    "pydantic>=2.6.0",
-
     # Client/Database
     "sqlalchemy[asyncio]>=2.0.25",
     "aiosqlite>=0.19.0",
@@ -53,6 +50,7 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
     "hypothesis>=6.98.0",
+    "mutmut>=3.7.0",
     "black>=24.1.0",
     "ruff>=0.2.0",
     "mypy>=1.8.0",
@@ -73,6 +71,16 @@ where = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+
+[tool.mutmut]
+source_paths = ["src/cairndb/"]
+pytest_add_cli_args_test_selection = ["tests/"]
+do_not_mutate_patterns = [
+    # disable mutations of all logger.info/debug/... statements
+    'logger\.\w+',
+    # disable mutating exceptions
+    'raise \w+',
+]
 
 [tool.black]
 line-length = 100

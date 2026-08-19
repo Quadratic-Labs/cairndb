@@ -21,52 +21,6 @@ from cairndb.utils.filesystem import get_file_mtime
 logger = structlog.get_logger(__name__)
 
 
-def _create_storage(config: ClientConfig):
-    """Create a storage backend from client config.
-
-    Uses the ``create_storage`` factory from ``cairndb.storage`` to
-    support all backends (filesystem, s3, azure, gcs).
-
-    Raises:
-        ValueError: If required storage fields are missing.
-        ConfigurationError: If the storage type is unknown.
-    """
-    from cairndb.storage import create_storage
-
-    config.validate_storage()
-
-    kwargs: dict[str, str] = {}
-    if config.storage_type == "filesystem":
-        kwargs["path"] = config.storage_path  # type: ignore[assignment]
-    elif config.storage_type == "s3":
-        if config.storage_bucket:
-            kwargs["bucket"] = config.storage_bucket
-        if config.storage_prefix:
-            kwargs["prefix"] = config.storage_prefix
-        if config.storage_region:
-            kwargs["region"] = config.storage_region
-        if config.storage_endpoint_url:
-            kwargs["endpoint_url"] = config.storage_endpoint_url
-    elif config.storage_type == "azure":
-        if config.storage_container:
-            kwargs["container"] = config.storage_container
-        if config.storage_azure_connection_string:
-            kwargs["connection_string"] = config.storage_azure_connection_string
-        if config.storage_azure_account_url:
-            kwargs["account_url"] = config.storage_azure_account_url
-        if config.storage_prefix:
-            kwargs["prefix"] = config.storage_prefix
-    elif config.storage_type == "gcs":
-        if config.storage_bucket:
-            kwargs["bucket"] = config.storage_bucket
-        if config.storage_prefix:
-            kwargs["prefix"] = config.storage_prefix
-        if config.storage_credentials_path:
-            kwargs["credentials_path"] = config.storage_credentials_path
-
-    return create_storage(config.storage_type, **kwargs)
-
-
 class CairnDBClient:
     """Main entry point for CairnDB client applications.
 
@@ -85,8 +39,7 @@ class CairnDBClient:
             await db.execute("INSERT INTO users ...")
 
         config = ClientConfig(
-            storage_type="filesystem",
-            storage_path="./data",
+            storage=FilesystemStorageConfig(path="./data"),
             db_path="./projection.db",
         )
 
@@ -104,7 +57,7 @@ class CairnDBClient:
     ) -> None:
         self._config = config
         self._registry = registry
-        self._storage = _create_storage(config)
+        self._storage = config.create_storage()
         self._updater = BackgroundUpdater(
             config, self._storage, registry, init_schema=init_schema
         )
@@ -114,7 +67,7 @@ class CairnDBClient:
         logger.info(
             "cairndb_client_initialized",
             db_path=config.db_path,
-            storage_type=config.storage_type,
+            storage_type=type(self._storage).__name__,
         )
 
     # ------------------------------------------------------------------

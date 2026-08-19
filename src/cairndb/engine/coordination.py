@@ -7,7 +7,9 @@ loops):
 - claim: a unique constraint — put-if-absent where losers converge on the
   winner's value
 - Lease: expiring ownership with epoch fencing — every write through the
-  lease is etag-guarded, so a fenced holder can never publish an outcome
+  lease is etag-guarded, so a fenced holder can never publish an outcome;
+  outsiders can write cooperative signals (e.g. cancel flags) into the
+  lease's state via signal(), which the holder observes without fencing
 - Document: a typed mutable document with a bounded CAS retry loop
 
 All primitives follow the storage layer's convention: the *_sync methods are
@@ -18,12 +20,13 @@ import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 import structlog
 
 from cairndb.core.exceptions import CairnDBError, LeaseLost
+from cairndb.core.types import Timestamp
 from cairndb.engine.objects import check_key
 from cairndb.storage.base import BlobStorage
 
@@ -31,10 +34,7 @@ logger = structlog.get_logger(__name__)
 
 _ACQUIRE_ATTEMPTS = 8
 _UPDATE_ATTEMPTS = 10
-
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
+_GUARDED_PUT_ATTEMPTS = 2
 
 
 def _encode(value: Any) -> bytes:
@@ -117,6 +117,11 @@ class Lease:
     previous write; when the guard fails and the document's epoch has
     advanced, the holder has been fenced and gets :class:`LeaseLost`.
 
+    A guard failure on our *own* document (epoch and holder unchanged)
+    is a cooperative signal written by :func:`signal_sync` — the fresh
+    state is absorbed and the write retried, so signals are observed
+    rather than clobbered.
+
     Obtain instances via :func:`acquire_sync` / :func:`acquire`, not the
     constructor.
     """
@@ -129,7 +134,7 @@ class Lease:
         ttl: float,
         epoch: int,
         holder: str | None,
-        deadline_at: datetime,
+        deadline_at: Timestamp,
         state: Any,
         etag: str,
     ):
@@ -147,13 +152,13 @@ class Lease:
 
     @staticmethod
     def _doc_bytes(
-        epoch: int, holder: str | None, deadline_at: datetime, state: Any
+        epoch: int, holder: str | None, deadline_at: Timestamp, state: Any
     ) -> bytes:
         return _encode(
             {
                 "epoch": epoch,
                 "holder": holder,
-                "deadline_at": deadline_at.isoformat(),
+                "deadline_at": deadline_at.to_iso(),
                 "state": state,
             }
         )
@@ -161,29 +166,39 @@ class Lease:
     @staticmethod
     def _parse(data: bytes) -> dict[str, Any]:
         doc = _decode(data)
-        doc["deadline_at"] = datetime.fromisoformat(doc["deadline_at"])
+        doc["deadline_at"] = Timestamp.from_iso(doc["deadline_at"])
         return doc
 
     @staticmethod
-    def _is_expired(doc: dict[str, Any], now: datetime) -> bool:
+    def _is_expired(doc: dict[str, Any], now: Timestamp) -> bool:
         return doc["holder"] is None or doc["deadline_at"] <= now
 
     # -- guarded writes -------------------------------------------------
 
-    def _guarded_put_sync(self, holder: str | None, deadline_at: datetime, state: Any) -> None:
+    def _guarded_put_sync(
+        self, holder: str | None, deadline_at: Timestamp, state_fn: Callable[[Any], Any]
+    ) -> None:
         """CAS-replace the lease document; LeaseLost if we were fenced.
 
-        A failed guard is re-read once: if epoch and holder are still ours
-        the etag was moved by an out-of-band write to our own document
-        (nothing in the engine does this, but a cooperating cancel flag
-        might) and the write is retried on the fresh etag; any other
-        content means we were fenced.
+        ``state_fn`` receives the freshest known state and returns the
+        state to write. It must be pure — a failed guard re-applies it.
+
+        A failed guard is re-read: if epoch and holder are still ours,
+        the content was changed by an out-of-band write to our own
+        document — a cooperative signal such as a cancel flag (see
+        :func:`signal_sync`). The fresh state is absorbed into
+        ``self.state``, ``state_fn`` is re-applied to it, and the write
+        is retried on the fresh etag, so signals are observed rather
+        than clobbered. Any other content means we were fenced. Fencing
+        is detected on the first re-read regardless of the attempt bound
+        — the bound only limits patience against repeated signals.
         """
         if self._released:
             raise LeaseLost(f"lease on {self.key!r} was already released")
 
-        data = self._doc_bytes(self.epoch, holder, deadline_at, state)
-        for _ in range(2):
+        for _ in range(_GUARDED_PUT_ATTEMPTS):
+            state = state_fn(self.state)
+            data = self._doc_bytes(self.epoch, holder, deadline_at, state)
             new_etag = self.storage.put_object_sync(self.key, data, if_match=self._etag)
             if new_etag is not None:
                 self._etag = new_etag
@@ -198,28 +213,55 @@ class Lease:
             doc = self._parse(current.data)
             if doc["epoch"] != self.epoch or doc["holder"] != self.holder:
                 break
-            self._etag = current.etag  # our document, moved etag: retry once
+            # Our document, changed out-of-band: absorb the signal, retry.
+            self._etag = current.etag
+            self.state = doc["state"]
 
         logger.info("lease_lost", key=self.key, epoch=self.epoch)
         raise LeaseLost(f"lease on {self.key!r} lost (epoch {self.epoch} fenced)")
 
     def renew_sync(self) -> None:
-        """Extend the deadline by ttl. Raises LeaseLost if fenced."""
-        self._guarded_put_sync(self.holder, _utcnow() + timedelta(seconds=self.ttl), self.state)
+        """Extend the deadline by ttl. Raises LeaseLost if fenced.
+
+        State is preserved — including any signal written out-of-band
+        since our last write, which becomes visible on ``self.state``.
+        A heartbeat loop of ``renew`` + ``self.state`` checks is the
+        holder side of a cooperative cancel protocol.
+        """
+        self._guarded_put_sync(
+            self.holder, Timestamp.now() + timedelta(seconds=self.ttl), lambda s: s
+        )
         logger.debug("lease_renewed", key=self.key, epoch=self.epoch)
 
     def write_sync(self, state: Any) -> None:
-        """Update the lease's state payload under the ownership guard."""
-        self._guarded_put_sync(self.holder, self.deadline_at, state)
+        """Replace the lease's state payload under the ownership guard.
+
+        The replacement is unconditional: a signal written out-of-band
+        since our last write is discarded unread. Holders participating
+        in a signaling protocol should use :meth:`update_state_sync`.
+        """
+        self._guarded_put_sync(self.holder, self.deadline_at, lambda _: state)
+
+    def update_state_sync(self, fn: Callable[[Any], Any]) -> Any:
+        """Apply `fn` to the freshest state and write the result, guarded.
+
+        `fn` must be pure — a lost guard re-reads and applies it again,
+        so a concurrently written signal ends up *inside* its input
+        rather than clobbered. Returns the state that was written.
+        """
+        self._guarded_put_sync(self.holder, self.deadline_at, fn)
+        return self.state
 
     def release_sync(self, state: Any = None) -> None:
         """Release the lease, optionally recording a final state.
 
+        Without an explicit `state` the freshest state is preserved.
         The document remains (holder None) so the epoch stays monotonic
         across re-acquisitions.
         """
-        final_state = state if state is not None else self.state
-        self._guarded_put_sync(None, _utcnow(), final_state)
+        self._guarded_put_sync(
+            None, Timestamp.now(), lambda s: state if state is not None else s
+        )
         self._released = True
         logger.info("lease_released", key=self.key, epoch=self.epoch)
 
@@ -230,6 +272,10 @@ class Lease:
     async def write(self, state: Any) -> None:
         """Async twin of :meth:`write_sync`."""
         await asyncio.to_thread(self.write_sync, state)
+
+    async def update_state(self, fn: Callable[[Any], Any]) -> Any:
+        """Async twin of :meth:`update_state_sync`."""
+        return await asyncio.to_thread(self.update_state_sync, fn)
 
     async def release(self, state: Any = None) -> None:
         """Async twin of :meth:`release_sync`."""
@@ -269,7 +315,7 @@ def acquire_sync(
         raise ValueError("ttl must be positive")
 
     for _ in range(_ACQUIRE_ATTEMPTS):
-        now = _utcnow()
+        now = Timestamp.now()
         deadline = now + timedelta(seconds=ttl)
         current = storage.get_object_sync(key)
 
@@ -328,6 +374,51 @@ async def acquire(
     )
 
 
+def signal_sync(storage: BlobStorage, key: str, state_fn: Callable[[Any], Any]) -> Any | None:
+    """
+    Write a cooperative signal into a lease document's state from outside
+    the lease (e.g. a cancel flag for the current holder).
+
+    A CAS read-modify-write of the ``state`` field only: epoch, holder
+    and deadline are preserved, so the holder is not fenced — its next
+    guarded write observes the new state instead (see
+    :meth:`Lease.renew_sync`). ``state_fn`` receives the current state
+    and must be pure — a lost CAS race re-reads and calls it again.
+
+    The signal is advisory: a holder replacing state with a plain
+    ``write`` discards it; cooperating holders use ``renew`` /
+    ``update_state`` and check ``lease.state``.
+
+    Returns:
+        The state written, or None when no lease document exists.
+
+    Raises:
+        CairnDBError: If the write kept conflicting.
+    """
+    check_key(key)
+    for _ in range(_UPDATE_ATTEMPTS):
+        current = storage.get_object_sync(key)
+        if current is None:
+            return None
+        doc = Lease._parse(current.data)
+        new_state = state_fn(doc["state"])
+        etag = storage.put_object_sync(
+            key,
+            Lease._doc_bytes(doc["epoch"], doc["holder"], doc["deadline_at"], new_state),
+            if_match=current.etag,
+        )
+        if etag is not None:
+            logger.debug("lease_signaled", key=key, epoch=doc["epoch"])
+            return new_state
+
+    raise CairnDBError(f"signal on {key!r} kept conflicting after {_UPDATE_ATTEMPTS} attempts")
+
+
+async def signal(storage: BlobStorage, key: str, state_fn: Callable[[Any], Any]) -> Any | None:
+    """Async twin of :func:`signal_sync`."""
+    return await asyncio.to_thread(signal_sync, storage, key, state_fn)
+
+
 # ----------------------------------------------------------------------
 # Document — typed mutable document with CAS retry
 # ----------------------------------------------------------------------
@@ -336,9 +427,10 @@ async def acquire(
 class Document:
     """A mutable, etag-guarded document with a read-modify-write loop.
 
-    ``model`` may be a pydantic BaseModel subclass, in which case values
-    are validated on read and serialized on write; without it, values are
-    plain JSON-serializable objects.
+    ``model`` may be any class exposing ``model_dump_json()`` and
+    ``model_validate_json()`` (e.g. a pydantic BaseModel), in which case
+    values are validated on read and serialized on write; without it,
+    values are plain JSON-serializable objects.
     """
 
     def __init__(self, storage: BlobStorage, key: str, model: type | None = None):

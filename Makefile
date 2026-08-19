@@ -1,6 +1,6 @@
 # CairnDB Development Makefile
 
-.PHONY: help install test coverage lint format type-check clean demo
+.PHONY: help install test coverage mutation mutation-results lint format type-check clean demo
 
 help:
 	@echo "CairnDB Development Commands"
@@ -10,6 +10,8 @@ help:
 	@echo "  make install      Install package in development mode"
 	@echo "  make test         Run all tests"
 	@echo "  make coverage     Run tests with coverage report"
+	@echo "  make mutation     Run mutation testing (mutmut)"
+	@echo "  make mutation-results  Show surviving mutants from last run"
 	@echo "  make lint         Run ruff linter"
 	@echo "  make format       Format code with black"
 	@echo "  make type-check   Run mypy type checker"
@@ -30,6 +32,12 @@ test:
 
 coverage:
 	pytest --cov=cairndb --cov-report=term-missing --cov-report=html tests/
+
+mutation:
+	mutmut run
+
+mutation-results:
+	mutmut results
 
 lint:
 	ruff check src/ tests/

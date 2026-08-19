@@ -14,10 +14,10 @@ weakening the durability guarantee.
 import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Self
 
 import structlog
-from pydantic import BaseModel, Field
 
 from cairndb.core.exceptions import CommitError, EventRejectedError
 from cairndb.core.log import Commit, Event
@@ -30,57 +30,46 @@ logger = structlog.get_logger(__name__)
 # Returns a list of the same length: element i is the event to commit in
 # place of pending[i] (possibly modified), or None to reject it. Rejected
 # events fail their append() with EventRejectedError.
-RevalidateHook = Callable[
-    [list[Event], list[Commit]], Awaitable[list[Event | None]]
-]
+RevalidateHook = Callable[[list[Event], list[Commit]], Awaitable[list[Event | None]]]
 
 
-class CommitterConfig(BaseModel):
-    """Committer configuration."""
+@dataclass
+class CommitterConfig:
+    """Committer configuration.
 
-    max_events_per_commit: int = Field(
-        default=1000,
-        ge=1,
-        le=100_000,
-        description="Maximum number of events batched into one commit object",
-    )
+    Attributes:
+        max_events_per_commit: Maximum number of events batched into one
+            commit object (1 to 100_000).
+        max_batch_wait_seconds: Extra time to wait for more events before
+            committing a batch (0 to 10). 0 commits immediately; group
+            commit still batches whatever arrives while a put is in flight.
+        max_commit_attempts: Attempts per batch before failing appends
+            with CommitError (at least 1).
+        lost_race_backoff_seconds: Backoff before retrying when a put was
+            rejected but the winning commit is not visible yet — a
+            concurrent-conditional-write conflict (0 to 5).
+        tail_hint: Cold-start optimization: commits at or below this
+            number are known to exist (e.g. from a snapshot), so tail
+            discovery only lists commits after it.
+    """
 
-    max_batch_wait_seconds: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=10.0,
-        description=(
-            "Extra time to wait for more events before committing a batch. "
-            "0 commits immediately; group commit still batches whatever "
-            "arrives while a put is in flight."
-        ),
-    )
+    max_events_per_commit: int = 1000
+    max_batch_wait_seconds: float = 0.0
+    max_commit_attempts: int = 20
+    lost_race_backoff_seconds: float = 0.05
+    tail_hint: int = 0
 
-    max_commit_attempts: int = Field(
-        default=20,
-        ge=1,
-        description="Attempts per batch before failing appends with CommitError",
-    )
-
-    lost_race_backoff_seconds: float = Field(
-        default=0.05,
-        ge=0.0,
-        le=5.0,
-        description=(
-            "Backoff before retrying when a put was rejected but the winning "
-            "commit is not visible yet (concurrent-conditional-write conflict)"
-        ),
-    )
-
-    tail_hint: int = Field(
-        default=0,
-        ge=0,
-        description=(
-            "Cold-start optimization: commits at or below this number are "
-            "known to exist (e.g. from a snapshot), so tail discovery only "
-            "lists commits after it"
-        ),
-    )
+    def __post_init__(self) -> None:
+        if not 1 <= self.max_events_per_commit <= 100_000:
+            raise ValueError("max_events_per_commit must be in [1, 100000]")
+        if not 0.0 <= self.max_batch_wait_seconds <= 10.0:
+            raise ValueError("max_batch_wait_seconds must be in [0, 10]")
+        if self.max_commit_attempts < 1:
+            raise ValueError("max_commit_attempts must be >= 1")
+        if not 0.0 <= self.lost_race_backoff_seconds <= 5.0:
+            raise ValueError("lost_race_backoff_seconds must be in [0, 5]")
+        if self.tail_hint < 0:
+            raise ValueError("tail_hint must be >= 0")
 
 
 class _Pending:
@@ -242,9 +231,7 @@ class Committer:
 
             batch = [
                 self._pending.popleft()
-                for _ in range(
-                    min(len(self._pending), self.config.max_events_per_commit)
-                )
+                for _ in range(min(len(self._pending), self.config.max_events_per_commit))
             ]
 
             try:
@@ -253,9 +240,7 @@ class Committer:
                 logger.error("commit_batch_unexpected_error", error=str(e))
                 for pending in batch:
                     if not pending.future.done():
-                        pending.future.set_exception(
-                            CommitError(f"Unexpected commit failure: {e}")
-                        )
+                        pending.future.set_exception(CommitError(f"Unexpected commit failure: {e}"))
 
     async def _commit_batch(self, batch: list[_Pending]) -> None:
         """Run the commit protocol for one batch until it wins, fails, or empties."""
@@ -344,17 +329,14 @@ class Committer:
 
         if len(decisions) != len(events):
             raise CommitError(
-                f"revalidate hook returned {len(decisions)} decisions "
-                f"for {len(events)} events"
+                f"revalidate hook returned {len(decisions)} decisions " f"for {len(events)} events"
             )
 
         kept: list[_Pending] = []
         for pending, decision in zip(pendings, decisions):
             if decision is None:
                 pending.future.set_exception(
-                    EventRejectedError(
-                        f"Event {pending.event.event_type} rejected by revalidation"
-                    )
+                    EventRejectedError(f"Event {pending.event.event_type} rejected by revalidation")
                 )
             else:
                 pending.event = decision

@@ -95,6 +95,14 @@ Every log is **dense**: commit N+1 is only ever created by a successful
 put-if-absent, so there are never gaps. Snapshots are discovered by listing
 their prefix; no manifest or pointer object exists.
 
+**Serialization convention** — the wire format is fixed per plane, not
+pluggable: control-plane objects (claims, leases, coordination documents) are
+canonical JSON (sorted keys, tight separators) so they can be inspected and
+diffed by hand when debugging; the data-plane log is msgpack for size, decode
+speed on bulk replay, and native binary payloads. Timestamps serialize in
+canonical RFC 3339 (`YYYY-MM-DDTHH:MM:SS.ffffffZ`, fixed width, always UTC) in
+both.
+
 Consumers of the generic object API (below) may keep key-addressed objects
 under any *other* prefix in the same store; the engine rejects application
 keys under the reserved prefixes.

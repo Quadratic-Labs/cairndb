@@ -73,7 +73,7 @@ src/cairndb/
 │   └── exceptions.py
 ├── storage/
 │   ├── base.py         # interface + key naming (log/, snapshots/)
-│   ├── config.py       # StorageConfig (env-driven factory)
+│   ├── config.py       # per-backend StorageConfig dataclasses (env/dict-driven)
 │   └── filesystem|s3|gcs|azure.py
 ├── client/
 │   ├── connection.py   # CairnDBClient (read-only SQLAlchemy sessions)
