@@ -52,6 +52,58 @@ class TestCopyDatabase:
             assert dst.exists()
             assert dst.read_bytes() == src.read_bytes()
 
+    def test_reflink_is_attempted_with_exact_invocation(self, monkeypatch):
+        """Reflink is the default mechanism: cp --reflink=auto runs with
+        captured output and no check, and a success skips the fallback."""
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = Path(temp_dir) / "source.db"
+            dst = Path(temp_dir) / "dest.db"
+            src.write_bytes(b"content")
+
+            recorded = {}
+
+            def fake_run(argv, **kwargs):
+                recorded["argv"] = argv
+                recorded["kwargs"] = kwargs
+                Path(argv[3]).write_bytes(Path(argv[2]).read_bytes())
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            fallback_calls = []
+            monkeypatch.setattr("cairndb.utils.filesystem.subprocess.run", fake_run)
+            monkeypatch.setattr(
+                "cairndb.utils.filesystem.shutil.copy2",
+                lambda s, d: fallback_calls.append((s, d)),
+            )
+
+            copy_database(src, dst)  # use_reflink defaults to True
+
+            assert recorded["argv"] == ["cp", "--reflink=auto", str(src), str(dst)]
+            assert recorded["kwargs"] == {
+                "capture_output": True,
+                "text": True,
+                "check": False,
+            }
+            assert fallback_calls == []  # success: no second copy
+            assert dst.read_bytes() == b"content"
+
+    def test_failed_reflink_falls_back_to_regular_copy(self, monkeypatch):
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = Path(temp_dir) / "source.db"
+            dst = Path(temp_dir) / "dest.db"
+            src.write_bytes(b"content")
+
+            def failing_run(argv, **kwargs):
+                return subprocess.CompletedProcess(argv, 1, "", "reflink unsupported")
+
+            monkeypatch.setattr("cairndb.utils.filesystem.subprocess.run", failing_run)
+
+            copy_database(src, dst)
+            assert dst.read_bytes() == b"content"  # shutil fallback did the work
+
     def test_copy_database_preserves_size(self):
         """Test that copy preserves file size."""
         with tempfile.TemporaryDirectory() as temp_dir:
