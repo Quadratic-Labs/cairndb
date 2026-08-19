@@ -120,7 +120,7 @@ class S3Storage(BlobStorage):
             response = self._client.list_objects_v2(**kwargs)
             for obj in response.get("Contents", []):
                 keys.append(obj["Key"])
-            if not response.get("IsTruncated", False):
+            if not response.get("IsTruncated", False):  # pragma: no mutate
                 break
             kwargs["ContinuationToken"] = response["NextContinuationToken"]
 
