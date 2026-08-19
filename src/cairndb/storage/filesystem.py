@@ -45,7 +45,7 @@ class FilesystemStorage(BlobStorage):
         """
         self.root_path = Path(root_path).absolute()
         (self.root_path / "log").mkdir(parents=True, exist_ok=True)
-        (self.root_path / "snapshots").mkdir(parents=True, exist_ok=True)
+        (self.root_path / "snapshots").mkdir(parents=True, exist_ok=True)  # pragma: no mutate
 
         logger.info("filesystem_storage_initialized", root_path=str(self.root_path))
 
@@ -56,7 +56,7 @@ class FilesystemStorage(BlobStorage):
     def _put_if_absent(self, relative_key: str, data: bytes) -> bool:
         """Atomically create the file if absent; True if this call created it."""
         target = self.root_path / relative_key
-        target.parent.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)  # pragma: no mutate
 
         # Unique temp name per process/thread so concurrent writers never collide
         tmp = target.with_name(

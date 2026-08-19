@@ -25,6 +25,79 @@ def storage(temp_storage_dir):
     return FilesystemStorage(temp_storage_dir)
 
 
+class TestLayoutAndErrors:
+    def test_init_creates_documented_layout(self, temp_storage_dir):
+        FilesystemStorage(temp_storage_dir / "ledger")
+        assert (temp_storage_dir / "ledger" / "log").is_dir()
+        assert (temp_storage_dir / "ledger" / "snapshots").is_dir()
+
+    @pytest.mark.asyncio
+    async def test_write_failure_raises_storage_error(self, storage):
+        """An OSError during the write surfaces as StorageError — the temp
+        cleanup must not mask it (the temp file may not exist yet)."""
+        (storage.root_path / "log").chmod(0o500)
+        try:
+            with pytest.raises(StorageError):
+                await storage.put_commit(1, b"x")
+        finally:
+            (storage.root_path / "log").chmod(0o755)
+
+    @pytest.mark.asyncio
+    async def test_gc_tolerates_concurrent_deletion(self, storage, monkeypatch):
+        """GC is documented as safe to run concurrently: a file vanishing
+        between the directory listing and the unlink is not an error."""
+        await storage.put_commit(1, b"a")
+        await storage.put_commit(2, b"b")
+        await storage.put_snapshot("1", 1, b"s")
+        await storage.put_snapshot("1", 2, b"s")
+
+        import os
+
+        real_unlink = Path.unlink
+
+        def racing_unlink(self, missing_ok=False):
+            os.remove(self)  # a concurrent GC got there first
+            return real_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", racing_unlink)
+        assert await storage.delete_commits_before(3) == 2
+        assert await storage.delete_snapshots_before("1", 3) == 2
+
+    @pytest.mark.asyncio
+    async def test_delete_snapshots_of_unknown_schema_returns_zero(self, storage):
+        assert await storage.delete_snapshots_before("9", 10) == 0
+
+    def test_delete_of_never_written_key_is_noop(self, storage):
+        storage.put_object_sync("a/x", b"v")
+        storage.delete_object_sync("a/y")  # parent exists, key never locked
+        assert storage.get_object_sync("a/x") is not None
+
+
+class TestObjectListing:
+    def test_partial_prefix_within_directory(self, storage):
+        storage.put_object_sync("state/x1", b"1")
+        storage.put_object_sync("state/y1", b"2")
+        assert storage.list_objects_sync("state/x") == ["state/x1"]
+
+    def test_prefix_without_slash_spans_directories(self, storage):
+        storage.put_object_sync("state/x1", b"1")
+        storage.put_object_sync("statexyz/f", b"2")
+        assert storage.list_objects_sync("state") == ["state/x1", "statexyz/f"]
+
+    def test_prefix_narrows_walk_to_deepest_directory(self, storage, monkeypatch):
+        storage.put_object_sync("a/b/x", b"1")
+        walked = []
+        real_rglob = Path.rglob
+
+        def spy_rglob(self, pattern):
+            walked.append(self)
+            return real_rglob(self, pattern)
+
+        monkeypatch.setattr(Path, "rglob", spy_rglob)
+        assert storage.list_objects_sync("a/b/x") == ["a/b/x"]
+        assert walked == [storage.root_path / "a" / "b"]
+
+
 class TestCommitLog:
     @pytest.mark.asyncio
     async def test_put_and_get_commit(self, storage):
