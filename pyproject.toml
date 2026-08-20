@@ -71,6 +71,9 @@ where = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+markers = [
+    "azure_live: hits a real Azure Blob container (opt-in: CAIRNDB_AZURE_INTEGRATION=1)",
+]
 
 [tool.mutmut]
 source_paths = ["src/cairndb/"]

@@ -294,7 +294,13 @@ class AzureBlobStorage(BlobStorage):
 
     def list_objects_sync(self, prefix: str = "") -> list[str]:
         try:
-            names = self._list_keys(self._key(prefix))
+            # On hierarchical-namespace (ADLS Gen2) accounts, directories are
+            # real objects that flat listings return as zero-byte stubs
+            # marked with hdi_isfolder metadata; they are not keys.
+            blobs = self._container_client.list_blobs(
+                name_starts_with=self._key(prefix), include=["metadata"]
+            )
+            names = [b.name for b in blobs if not (b.metadata or {}).get("hdi_isfolder")]
         except Exception as e:
             raise StorageError(f"Failed to list objects from Azure: {e}") from e
         if self._prefix:

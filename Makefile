@@ -1,6 +1,6 @@
 # CairnDB Development Makefile
 
-.PHONY: help install test coverage mutation mutation-results lint format type-check clean demo
+.PHONY: help install test coverage mutation mutation-results azure-integration lint format type-check clean demo
 
 help:
 	@echo "CairnDB Development Commands"
@@ -12,6 +12,7 @@ help:
 	@echo "  make coverage     Run tests with coverage report"
 	@echo "  make mutation     Run mutation testing (mutmut)"
 	@echo "  make mutation-results  Show surviving mutants from last run"
+	@echo "  make azure-integration Run the live Azure suite (needs CAIRNDB_AZURE_* env)"
 	@echo "  make lint         Run ruff linter"
 	@echo "  make format       Format code with black"
 	@echo "  make type-check   Run mypy type checker"
@@ -38,6 +39,19 @@ mutation:
 
 mutation-results:
 	mutmut results
+
+# Requires an existing container and credentials, either exported:
+#   export CAIRNDB_AZURE_CONTAINER=<container>
+#   export CAIRNDB_AZURE_CONNECTION_STRING='...'  # or CAIRNDB_AZURE_ACCOUNT_URL
+# or kept in a plain VAR=value env file and passed via AZURE_ENV:
+#   make azure-integration AZURE_ENV=env
+azure-integration:
+	@f='$(AZURE_ENV)'; \
+	if [ -n "$$f" ]; then \
+		case "$$f" in */*) ;; *) f="./$$f";; esac; \
+		set -a; . "$$f"; set +a; \
+	fi; \
+	CAIRNDB_AZURE_INTEGRATION=1 pytest tests/integration/test_azure_live.py -v
 
 lint:
 	ruff check src/ tests/

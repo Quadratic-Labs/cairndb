@@ -335,11 +335,20 @@ class TestConditionalObjects:
         blob.delete_blob.side_effect = ResourceNotFoundError("missing")
         storage.delete_object_sync("state/x")  # no-op
 
-    def test_list_objects_strips_prefix(self, storage, mock_container):
-        blobs = [MagicMock(), MagicMock()]
-        blobs[0].name = "my/prefix/state/x"
-        blobs[1].name = "my/prefix/config/a"
-        mock_container.list_blobs.return_value = blobs
+    def test_list_objects_strips_prefix_and_directory_stubs(self, storage, mock_container):
+        real = MagicMock()
+        real.name = "my/prefix/state/x"
+        real.metadata = None
+        other = MagicMock()
+        other.name = "my/prefix/config/a"
+        other.metadata = {}
+        # ADLS Gen2 (hierarchical namespace) directory stub: not a key.
+        stub = MagicMock()
+        stub.name = "my/prefix/state"
+        stub.metadata = {"hdi_isfolder": "true"}
+        mock_container.list_blobs.return_value = [real, stub, other]
 
         assert storage.list_objects_sync() == ["config/a", "state/x"]
-        mock_container.list_blobs.assert_called_once_with(name_starts_with="my/prefix/")
+        mock_container.list_blobs.assert_called_once_with(
+            name_starts_with="my/prefix/", include=["metadata"]
+        )

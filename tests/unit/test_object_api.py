@@ -249,7 +249,9 @@ class TestAzureObjects:
     def test_list_strips_store_prefix(self, azure_storage, mock_container):
         blobs = [MagicMock(), MagicMock()]
         blobs[0].name = "my/prefix/state/b.json"
+        blobs[0].metadata = None
         blobs[1].name = "my/prefix/state/a.json"
+        blobs[1].metadata = None
         mock_container.list_blobs.return_value = blobs
 
         assert azure_storage.list_objects_sync("state/") == [
@@ -257,7 +259,7 @@ class TestAzureObjects:
             "state/b.json",
         ]
         mock_container.list_blobs.assert_called_once_with(
-            name_starts_with="my/prefix/state/"
+            name_starts_with="my/prefix/state/", include=["metadata"]
         )
 
 
