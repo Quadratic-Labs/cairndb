@@ -1,6 +1,7 @@
 """Tests for core type definitions."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 
@@ -126,3 +127,38 @@ class TestTimestamp:
 
         with pytest.raises(AttributeError):
             ts.value = datetime.now(UTC)  # type: ignore
+
+    def test_aware_non_utc_converts_to_same_instant(self):
+        """An aware non-UTC datetime is converted, preserving the instant."""
+        cet = timezone(timedelta(hours=1))
+        ts = Timestamp(datetime(2024, 1, 15, 13, 0, 0, tzinfo=cet))
+
+        assert ts.value.tzinfo == UTC
+        assert ts.to_iso() == "2024-01-15T12:00:00.000000Z"
+
+    def test_non_datetime_rejected(self):
+        """Anything but a datetime raises TypeError (date included)."""
+        with pytest.raises(TypeError, match="must be a datetime, got str"):
+            Timestamp("2024-01-15T12:00:00Z")  # type: ignore
+        with pytest.raises(TypeError, match="must be a datetime, got date"):
+            Timestamp(date(2024, 1, 15))  # type: ignore
+
+    def test_uuid7_round_trip(self):
+        """to_uuid7/from_uuid7 round-trip at millisecond precision."""
+        ts = Timestamp(datetime(2024, 1, 15, 12, 30, 45, 123000, tzinfo=UTC))
+        u = ts.to_uuid7()
+
+        assert u.version == 7
+        assert Timestamp.from_uuid7(u) == ts
+
+    def test_uuid7_orders_chronologically(self):
+        """UUIDv7 lexicographic order follows timestamp order."""
+        early = Timestamp(datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC))
+        late = Timestamp(datetime(2024, 1, 15, 12, 0, 1, tzinfo=UTC))
+
+        assert early.to_uuid7() < late.to_uuid7()
+
+    def test_from_uuid7_rejects_other_versions(self):
+        """Non-v7 UUIDs are rejected."""
+        with pytest.raises(ValueError, match="Not a UUIDv7"):
+            Timestamp.from_uuid7(uuid4())

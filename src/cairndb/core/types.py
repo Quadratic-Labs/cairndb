@@ -1,9 +1,11 @@
 """Core type definitions for CairnDB."""
 
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import NewType, overload
+from uuid import UUID
 
 _SEQUENCE_RE = re.compile(r"^(\d{12}):(\d{6})$")
 
@@ -68,6 +70,10 @@ class Timestamp:
     value: datetime
 
     def __post_init__(self) -> None:
+        if not isinstance(self.value, datetime):
+            raise TypeError(
+                f"Timestamp value must be a datetime, got {type(self.value).__name__}"
+            )
         if self.value.tzinfo is None:
             object.__setattr__(self, "value", self.value.replace(tzinfo=UTC))
         else:
@@ -87,6 +93,15 @@ class Timestamp:
     def from_iso(cls, iso_string: str) -> Timestamp:
         """Parse from ISO 8601 format string."""
         return cls(datetime.fromisoformat(iso_string))
+
+    @classmethod
+    def from_uuid7(cls, u: UUID) -> Timestamp:
+        """Extract the embedded millisecond timestamp from a UUIDv7."""
+        if u.version != 7:
+            raise ValueError(f"Not a UUIDv7: {u}")
+        # Top 48 bits = Unix timestamp in milliseconds
+        ts_ms = (int(u) >> 80) & 0xFFFF_FFFF_FFFF
+        return cls(datetime.fromtimestamp(ts_ms / 1000, tz=UTC))
 
     def __add__(self, other: object) -> Timestamp:
         if not isinstance(other, timedelta):
@@ -115,6 +130,30 @@ class Timestamp:
         offset, 'Z', or a naive string (assumed UTC) is accepted.
         """
         return self.value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    def to_uuid7(self) -> UUID:
+        """Encode as a standard UUIDv7 (RFC 9562, ascending lexicographic order).
+
+        The 80 non-timestamp bits are random, so each call yields a distinct
+        UUID; only the millisecond timestamp round-trips via ``from_uuid7``.
+
+        Layout (128 bits):
+            127..80  unix_ts_ms  48-bit millisecond timestamp
+             79..76  0x7         version
+             75..64  rand_a      12 random bits
+             63..62  0b10        RFC 4122 variant
+             61..0   rand_b      62 random bits
+        """
+        ts_ms = int(self.value.timestamp() * 1000)
+        rand_a = secrets.randbits(12)
+        rand_b = secrets.randbits(62)
+        return UUID(int=(
+              (ts_ms  << 80)
+            | (0x7    << 76)
+            | (rand_a << 64)
+            | (0b10   << 62)
+            |  rand_b
+        ))
 
     def __str__(self) -> str:
         """String representation in ISO format."""
