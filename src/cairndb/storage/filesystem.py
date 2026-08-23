@@ -249,6 +249,31 @@ class FilesystemStorage(BlobStorage):
         finally:
             os.close(fd)
 
+    def append_object_sync(self, key: str, data: bytes) -> bool:
+        """True append: O(len(data)) under the same lock CAS writers hold."""
+        target = self._object_path(key)
+
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(self._lock_path(target), os.O_CREAT | os.O_RDWR)
+        except OSError as e:
+            raise StorageError(f"Failed to lock object {key}: {e}") from e
+
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                with open(target, "ab") as f:
+                    f.write(data)
+                    f.flush()
+                    os.fsync(f.fileno())
+                return True
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError as e:
+            raise StorageError(f"Failed to append to object {key}: {e}") from e
+        finally:
+            os.close(fd)
+
     def delete_object_sync(self, key: str) -> None:
         target = self._object_path(key)
         if not target.parent.is_dir():

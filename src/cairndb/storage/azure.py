@@ -7,11 +7,12 @@ import structlog
 try:
     from azure.core import MatchConditions
     from azure.core.exceptions import (
+        HttpResponseError,
         ResourceExistsError,
         ResourceModifiedError,
         ResourceNotFoundError,
     )
-    from azure.storage.blob import BlobServiceClient
+    from azure.storage.blob import BlobClient, BlobServiceClient
 except ImportError as e:
     raise ImportError(
         "azure-storage-blob is required for Azure storage. "
@@ -272,7 +273,14 @@ class AzureBlobStorage(BlobStorage):
                 props = blob_client.upload_blob(data, overwrite=False)
             else:
                 props = blob_client.upload_blob(data, overwrite=True)
-        except (ResourceExistsError, ResourceModifiedError):
+        except ResourceModifiedError:
+            return None
+        except ResourceExistsError as e:
+            # Put Blob cannot change an existing blob's type in place: a
+            # block-blob write over an append blob is a 409 InvalidBlobType,
+            # not a precondition failure — replace via delete + recreate.
+            if getattr(e, "error_code", None) == "InvalidBlobType" and not if_absent:
+                return self._put_replacing_blob_type(blob_client, key, data, if_match)
             return None
         except ResourceNotFoundError:
             # if_match on a blob deleted in the meantime: precondition failed.
@@ -282,6 +290,82 @@ class AzureBlobStorage(BlobStorage):
         except Exception as e:
             raise StorageError(f"Failed to write object {key} to Azure: {e}") from e
         return str(props["etag"])
+
+    def _put_replacing_blob_type(
+        self, blob_client: BlobClient, key: str, data: bytes, if_match: str | None
+    ) -> str | None:
+        """Replace a blob whose type differs from the write (delete + recreate).
+
+        With ``if_match``, the compare-and-swap stays honest: the delete is
+        etag-conditioned (atomic), and the recreate is put-if-absent, so a
+        concurrent writer in the window wins cleanly and this call reports a
+        precondition failure. An unconditional put is last-writer-wins by
+        contract, so a plain delete + recreate is faithful to it.
+        """
+        try:
+            if if_match is not None:
+                try:
+                    blob_client.delete_blob(
+                        etag=if_match, match_condition=MatchConditions.IfNotModified
+                    )
+                except (ResourceModifiedError, ResourceNotFoundError):
+                    return None
+                try:
+                    props = blob_client.upload_blob(data, overwrite=False)
+                except ResourceExistsError:
+                    return None
+            else:
+                try:
+                    blob_client.delete_blob()
+                except ResourceNotFoundError:
+                    pass
+                props = blob_client.upload_blob(data, overwrite=True)
+        except Exception as e:
+            raise StorageError(f"Failed to write object {key} to Azure: {e}") from e
+        return str(props["etag"])
+
+    def append_object_sync(self, key: str, data: bytes) -> bool:
+        """True append via Azure Append Blobs.
+
+        The object is created as an append blob on first use;
+        ``append_block`` is server-side atomic, so concurrent appenders
+        interleave whole blocks and never lose bytes. A key that already
+        holds a *block* blob (written before appends existed, or by
+        ``put_object_sync``) cannot change type in place — those fall back
+        to the base compare-and-swap rewrite.
+        """
+        blob_client = self._container_client.get_blob_client(self._key(key))
+        for _ in range(2):
+            try:
+                blob_client.append_block(data)
+                return True
+            except ResourceNotFoundError:
+                # First append: create the append blob, put-if-absent so a
+                # racing creator can never clobber another's first block.
+                try:
+                    blob_client.create_append_blob(
+                        match_condition=MatchConditions.IfMissing
+                    )
+                except (ResourceExistsError, ResourceModifiedError):
+                    pass  # someone else created it — append to theirs
+                except HttpResponseError as e:
+                    raise StorageError(
+                        f"Failed to create append blob {key}: {e}"
+                    ) from e
+            except HttpResponseError as e:
+                # error_code is stamped dynamically by the storage SDK's
+                # error processing; absent on bare azure-core errors.
+                if getattr(e, "error_code", None) == "InvalidBlobType":
+                    # Existing block blob: appending in place is impossible.
+                    return super().append_object_sync(key, data)
+                raise StorageError(
+                    f"Failed to append to object {key} in Azure: {e}"
+                ) from e
+            except Exception as e:
+                raise StorageError(
+                    f"Failed to append to object {key} in Azure: {e}"
+                ) from e
+        raise StorageError(f"Failed to append to object {key} in Azure: blob vanished")
 
     def delete_object_sync(self, key: str) -> None:
         blob_client = self._container_client.get_blob_client(self._key(key))

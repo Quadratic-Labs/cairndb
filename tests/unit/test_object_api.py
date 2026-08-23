@@ -7,6 +7,7 @@ import botocore.exceptions
 import pytest
 from azure.core import MatchConditions
 from azure.core.exceptions import (
+    HttpResponseError,
     ResourceExistsError,
     ResourceModifiedError,
     ResourceNotFoundError,
@@ -16,6 +17,7 @@ from google.api_core.exceptions import PreconditionFailed as GCSPreconditionFail
 
 from cairndb.core.exceptions import StorageError
 from cairndb.storage import StoredObject
+from cairndb.storage.base import BlobStorage
 from cairndb.storage.filesystem import FilesystemStorage
 
 # ---------------------------------------------------------------------------
@@ -57,6 +59,75 @@ class TestFilesystemObjects:
 
     def test_if_match_on_missing_object_fails(self, fs):
         assert fs.put_object_sync("k", b"v", if_match="deadbeef") is None
+
+    def test_append_creates_when_absent(self, fs):
+        assert fs.append_object_sync("s.jsonl", b"a\n") is True
+        assert fs.get_object_sync("s.jsonl").data == b"a\n"
+
+    def test_append_extends_existing(self, fs):
+        fs.put_object_sync("s.jsonl", b"a\n")
+        assert fs.append_object_sync("s.jsonl", b"b\n") is True
+        obj = fs.get_object_sync("s.jsonl")
+        assert obj.data == b"a\nb\n"
+        # etag reflects the appended content (computed from data on read)
+        assert obj.etag == fs._etag(b"a\nb\n")
+
+    def test_concurrent_appends_lose_nothing(self, fs):
+        def appender(line: bytes):
+            for _ in range(20):
+                assert fs.append_object_sync("s.jsonl", line)
+
+        threads = [
+            threading.Thread(target=appender, args=(f"{i}\n".encode(),))
+            for i in range(4)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        lines = fs.get_object_sync("s.jsonl").data.decode().splitlines()
+        assert len(lines) == 80
+        for i in range(4):
+            assert lines.count(str(i)) == 20
+
+
+# ---------------------------------------------------------------------------
+# Base append fallback — the compare-and-swap rewrite loop
+# ---------------------------------------------------------------------------
+
+
+class _MinimalStorage(FilesystemStorage):
+    """A backend with no native append: exercises the base CAS fallback."""
+
+    append_object_sync = BlobStorage.append_object_sync
+
+
+class TestAppendFallback:
+    @pytest.fixture
+    def minimal(self, tmp_path):
+        return _MinimalStorage(tmp_path)
+
+    def test_fallback_creates_and_extends(self, minimal):
+        assert minimal.append_object_sync("s.jsonl", b"a\n") is True
+        assert minimal.append_object_sync("s.jsonl", b"b\n") is True
+        assert minimal.get_object_sync("s.jsonl").data == b"a\nb\n"
+
+    def test_fallback_retries_on_contention_then_gives_up(self, minimal):
+        minimal.put_object_sync("s.jsonl", b"a\n")
+        real_put = minimal.put_object_sync
+        calls = {"n": 0}
+
+        def contended_put(key, data, **kwargs):
+            if kwargs.get("if_match") is not None:
+                calls["n"] += 1
+                real_put(key, b"someone else\n")  # invalidate the etag
+                return None
+            return real_put(key, data, **kwargs)
+
+        minimal.put_object_sync = contended_put
+        assert minimal.append_object_sync("s.jsonl", b"b\n") is False
+        assert calls["n"] == minimal._APPEND_ATTEMPTS
 
     def test_contradictory_preconditions_raise(self, fs):
         with pytest.raises(ValueError):
@@ -261,6 +332,119 @@ class TestAzureObjects:
         mock_container.list_blobs.assert_called_once_with(
             name_starts_with="my/prefix/state/", include=["metadata"]
         )
+
+    def test_put_over_append_blob_replaces_via_delete(
+        self, azure_storage, mock_container
+    ):
+        error = ResourceExistsError("409")
+        error.error_code = "InvalidBlobType"
+        blob = MagicMock()
+        blob.upload_blob.side_effect = [error, {"etag": '"0xNEW"'}]
+        mock_container.get_blob_client.return_value = blob
+
+        assert azure_storage.put_object_sync("k", b"v") == '"0xNEW"'
+        blob.delete_blob.assert_called_once_with()
+        assert blob.upload_blob.call_args_list[-1].kwargs == {"overwrite": True}
+
+    def test_cas_put_over_append_blob_deletes_conditionally(
+        self, azure_storage, mock_container
+    ):
+        error = ResourceExistsError("409")
+        error.error_code = "InvalidBlobType"
+        blob = MagicMock()
+        blob.upload_blob.side_effect = [error, {"etag": '"0xNEW"'}]
+        mock_container.get_blob_client.return_value = blob
+
+        assert azure_storage.put_object_sync("k", b"v", if_match='"0xOLD"') == '"0xNEW"'
+        blob.delete_blob.assert_called_once_with(
+            etag='"0xOLD"', match_condition=MatchConditions.IfNotModified
+        )
+        assert blob.upload_blob.call_args_list[-1].kwargs == {"overwrite": False}
+
+    def test_cas_put_over_append_blob_stale_etag_loses(
+        self, azure_storage, mock_container
+    ):
+        error = ResourceExistsError("409")
+        error.error_code = "InvalidBlobType"
+        blob = MagicMock()
+        blob.upload_blob.side_effect = error
+        blob.delete_blob.side_effect = ResourceModifiedError("412")
+        mock_container.get_blob_client.return_value = blob
+
+        assert azure_storage.put_object_sync("k", b"v", if_match='"0xOLD"') is None
+
+    def test_if_absent_conflict_is_still_a_plain_loss(
+        self, azure_storage, mock_container
+    ):
+        error = ResourceExistsError("409")
+        error.error_code = "InvalidBlobType"
+        blob = MagicMock()
+        blob.upload_blob.side_effect = error
+        mock_container.get_blob_client.return_value = blob
+
+        assert azure_storage.put_object_sync("k", b"v", if_absent=True) is None
+        blob.delete_blob.assert_not_called()
+
+    def test_append_uses_append_block(self, azure_storage, mock_container):
+        blob = MagicMock()
+        mock_container.get_blob_client.return_value = blob
+
+        assert azure_storage.append_object_sync("s.jsonl", b"a\n") is True
+        blob.append_block.assert_called_once_with(b"a\n")
+        blob.create_append_blob.assert_not_called()
+
+    def test_append_creates_append_blob_when_missing(
+        self, azure_storage, mock_container
+    ):
+        blob = MagicMock()
+        blob.append_block.side_effect = [ResourceNotFoundError("404"), MagicMock()]
+        mock_container.get_blob_client.return_value = blob
+
+        assert azure_storage.append_object_sync("s.jsonl", b"a\n") is True
+        blob.create_append_blob.assert_called_once_with(
+            match_condition=MatchConditions.IfMissing
+        )
+        assert blob.append_block.call_count == 2
+
+    def test_append_create_race_is_harmless(self, azure_storage, mock_container):
+        blob = MagicMock()
+        blob.append_block.side_effect = [ResourceNotFoundError("404"), MagicMock()]
+        blob.create_append_blob.side_effect = ResourceExistsError("exists")
+        mock_container.get_blob_client.return_value = blob
+
+        assert azure_storage.append_object_sync("s.jsonl", b"a\n") is True
+        assert blob.append_block.call_count == 2
+
+    def test_append_on_block_blob_falls_back_to_cas(
+        self, azure_storage, mock_container
+    ):
+        error = HttpResponseError("409")
+        error.error_code = "InvalidBlobType"
+        blob = MagicMock()
+        blob.append_block.side_effect = error
+        downloader = blob.download_blob.return_value
+        downloader.readall.return_value = b"a\n"
+        downloader.properties.etag = '"0xOLD"'
+        blob.upload_blob.return_value = {"etag": '"0xNEW"'}
+        mock_container.get_blob_client.return_value = blob
+
+        assert azure_storage.append_object_sync("s.jsonl", b"b\n") is True
+        blob.upload_blob.assert_called_once_with(
+            b"a\nb\n",
+            overwrite=True,
+            etag='"0xOLD"',
+            match_condition=MatchConditions.IfNotModified,
+        )
+
+    def test_append_other_errors_raise_storage_error(
+        self, azure_storage, mock_container
+    ):
+        blob = MagicMock()
+        blob.append_block.side_effect = RuntimeError("boom")
+        mock_container.get_blob_client.return_value = blob
+
+        with pytest.raises(StorageError):
+            azure_storage.append_object_sync("s.jsonl", b"a\n")
 
 
 # ---------------------------------------------------------------------------

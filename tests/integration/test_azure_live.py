@@ -202,6 +202,24 @@ async def test_object_cas_ladder(live_storage):
     assert s.list_objects_sync("state/") == ["state/x"]
 
 
+async def test_object_append_ladder(live_storage):
+    s = live_storage
+
+    # First append creates the append blob; later appends extend it.
+    assert s.append_object_sync("logs/s.jsonl", b"a\n") is True
+    assert s.append_object_sync("logs/s.jsonl", b"b\n") is True
+    assert s.get_object_sync("logs/s.jsonl").data == b"a\nb\n"
+
+    # The appended blob still supports the conditional object API: an
+    # unconditional put replaces it (Put Blob resets the blob type), and
+    # a fresh append on the replaced key falls back to the CAS rewrite
+    # because the key now holds a block blob.
+    etag = s.put_object_sync("logs/s.jsonl", b"rewritten\n")
+    assert etag is not None
+    assert s.append_object_sync("logs/s.jsonl", b"c\n") is True
+    assert s.get_object_sync("logs/s.jsonl").data == b"rewritten\nc\n"
+
+
 async def test_engine_kernel_smoke(live_storage):
     """One pass of the coordination kernel over real Azure CAS."""
     from cairndb import CairnDB

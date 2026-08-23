@@ -201,6 +201,42 @@ class BlobStorage(ABC):
             StorageError: On any failure other than a failed precondition.
         """
 
+    _APPEND_ATTEMPTS = 8
+
+    def append_object_sync(self, key: str, data: bytes) -> bool:
+        """
+        Append `data` to object `key`, creating the object if absent.
+
+        Atomic per call with respect to concurrent appends: each call's
+        bytes land contiguously and none are lost, though ordering across
+        concurrent appenders is unspecified. Intended for append-only
+        streams (e.g. .jsonl observability logs); do not mix concurrent
+        appends with unconditional ``put_object_sync`` rewrites of the
+        same key — a full rewrite may discard a concurrent append.
+
+        This default implementation is a compare-and-swap read-modify-write
+        loop (O(object size) per append). Backends with a native append
+        primitive override it with a true O(len(data)) append.
+
+        Returns:
+            True when the append landed; False when the CAS fallback
+            exhausted its retries under contention.
+
+        Raises:
+            StorageError: On any failure other than contention.
+        """
+        for _ in range(self._APPEND_ATTEMPTS):
+            obj = self.get_object_sync(key)
+            if obj is None:
+                if self.put_object_sync(key, data, if_absent=True) is not None:
+                    return True
+            elif (
+                self.put_object_sync(key, obj.data + data, if_match=obj.etag)
+                is not None
+            ):
+                return True
+        return False
+
     @abstractmethod
     def delete_object_sync(self, key: str) -> None:
         """Delete object `key`. Deleting a missing object is a no-op."""
@@ -225,6 +261,10 @@ class BlobStorage(ABC):
         return await asyncio.to_thread(
             lambda: self.put_object_sync(key, data, if_match=if_match, if_absent=if_absent)
         )
+
+    async def append_object(self, key: str, data: bytes) -> bool:
+        """Async wrapper around :meth:`append_object_sync`."""
+        return await asyncio.to_thread(self.append_object_sync, key, data)
 
     async def delete_object(self, key: str) -> None:
         """Async wrapper around :meth:`delete_object_sync`."""
