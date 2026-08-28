@@ -233,11 +233,14 @@ async def test_engine_kernel_smoke(live_storage):
         assert lost.won is False
         assert lost.value == {"run": "a"}
 
-        # lease: ownership, held-exclusion, signal absorbed without fencing.
+        # lease: ownership, held-exclusion, cooperative write absorbed
+        # without fencing.
         lease = await db.lease("state/run-1", ttl=60, holder="w1")
         assert lease is not None
         assert await db.lease("state/run-1", ttl=60, holder="w2") is None
-        await db.signal("state/run-1", lambda s: {"cancel_requested": True})
+        await db.cooperative_write(
+            "state/run-1", lambda s: {"cancel_requested": True}
+        )
         await lease.renew()
         assert lease.state == {"cancel_requested": True}
         assert lease.epoch == 1

@@ -97,12 +97,13 @@ lease = await db.lease("state/etl/run-123", ttl=120,
 
 lease.epoch                                # monotonic fence token, bumped per acquisition
 await lease.renew()                        # CAS; raises LeaseLost if fenced
-await lease.write({"progress": 0.5})       # guarded payload replace (discards signals)
-await lease.update_state(lambda s: {**s, "progress": 0.5})  # guarded RMW (preserves signals)
+await lease.write({"progress": 0.5})       # guarded payload replace (discards cooperative writes)
+await lease.update_state(lambda s: {**s, "progress": 0.5})  # guarded RMW (preserves cooperative writes)
 await lease.release(state={"status": "completed"})
 
-# from outside the lease — cooperative signal to the holder, no fencing:
-await db.signal("state/etl/run-123", lambda s: {**(s or {}), "cancel_requested": True})
+# from outside the lease — cooperative write to the holder, no fencing:
+await db.cooperative_write("state/etl/run-123",
+                           lambda s: {**(s or {}), "cancel_requested": True})
 ```
 
 Semantics:
@@ -113,12 +114,14 @@ Semantics:
 - Every write through the lease is etag-guarded. A holder that was fenced
   (its lease expired and was stolen) gets `LeaseLost` on its next write and
   must discard its outcome — Flowlet's worker contract, verbatim.
-- `db.signal(key, fn)` CAS-updates only the `state` field, preserving epoch,
-  holder and deadline — the holder is *signaled*, not fenced. Its next
-  `renew`/`update_state` absorbs the fresh state before writing, so the
-  signal shows up on `lease.state`. A heartbeat of `renew` + `lease.state`
-  checks is the holder side of a cooperative cancel protocol; plain
-  `write` replaces state unconditionally and discards unread signals.
+- `db.cooperative_write(key, fn)` CAS-updates only the `state` field,
+  preserving epoch, holder and deadline — the holder is *written to*, not
+  fenced. Its next `renew`/`update_state` absorbs the fresh state before
+  writing, so the write shows up on `lease.state`. A heartbeat of `renew` +
+  `lease.state` checks is the holder side of a cooperative cancel protocol;
+  plain `write` replaces state unconditionally and discards unread
+  cooperative writes. (This primitive was previously named `signal`; that
+  name now belongs to the out-of-band signal *objects* layers above build.)
 - Expiry is judged against the holder-written `deadline_at`; clocks only
   need to agree to within the ttl (choose generous ttls).
 

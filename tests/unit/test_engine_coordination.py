@@ -9,7 +9,13 @@ import pytest
 from cairndb import CairnDB, LeaseLost
 from cairndb.core.exceptions import CairnDBError
 from cairndb.core.types import Timestamp
-from cairndb.engine.coordination import Lease, _encode, acquire, acquire_sync, signal_sync
+from cairndb.engine.coordination import (
+    Lease,
+    _encode,
+    acquire,
+    acquire_sync,
+    cooperative_write_sync,
+)
 
 
 @pytest.fixture
@@ -205,12 +211,13 @@ async def test_guarded_writes_preserve_ownership(db, storage):
     assert await db.lease("state/run-1", ttl=60, holder="w2", steal_if_expired=False) is None
 
 
-async def test_signal_absorbed_after_prior_guarded_write(db):
+async def test_cooperative_write_absorbed_after_prior_guarded_write(db):
     # The etag observed at a successful write must guard the next one: a
-    # signal landing between two guarded writes is absorbed, not clobbered.
+    # cooperative write landing between two guarded writes is absorbed,
+    # not clobbered.
     lease = await db.lease("state/run-1", ttl=60, holder="w1")
     await lease.write({"p": 0})
-    await db.signal("state/run-1", lambda s: {**s, "cancel_requested": True})
+    await db.cooperative_write("state/run-1", lambda s: {**s, "cancel_requested": True})
     await lease.renew()
     assert lease.state == {"p": 0, "cancel_requested": True}
 
@@ -233,20 +240,20 @@ async def test_same_holder_reacquiring_fences_its_old_lease(db, storage):
         await old.renew()
 
 
-async def test_repeated_signals_exhaust_guarded_write_patience(db):
-    # Every retry must stay CAS-guarded: when a fresh signal lands before
-    # each write attempt, the attempt bound runs out and the write fails
-    # rather than clobbering a signal it never observed.
+async def test_repeated_cooperative_writes_exhaust_guarded_write_patience(db):
+    # Every retry must stay CAS-guarded: when a fresh cooperative write
+    # lands before each write attempt, the attempt bound runs out and the
+    # write fails rather than clobbering a write it never observed.
     lease = await db.lease("state/run-1", ttl=60, holder="w1")
 
-    def signaled_every_attempt(state):
-        # Deliberately impure: simulates an outsider signaling in the
+    def written_to_every_attempt(state):
+        # Deliberately impure: simulates an outsider writing in the
         # window between the holder's read and its write, every time.
-        db.signal_sync("state/run-1", lambda s: {"seq": ((s or {}).get("seq") or 0) + 1})
+        db.cooperative_write_sync("state/run-1", lambda s: {"seq": ((s or {}).get("seq") or 0) + 1})
         return {"mine": True}
 
     with pytest.raises(LeaseLost):
-        await lease.update_state(signaled_every_attempt)
+        await lease.update_state(written_to_every_attempt)
 
 
 async def test_writes_after_release_raise_lease_lost(db):
@@ -316,54 +323,55 @@ async def test_stolen_lease_is_fully_functional(db, storage):
     assert thief.holder == "w2"
     assert thief.deadline_at > Timestamp.now()
 
-    # It renews against live storage and absorbs signals like any lease.
-    await db.signal("state/run-1", lambda s: {"cancel_requested": True})
+    # It renews against live storage and absorbs cooperative writes like
+    # any lease.
+    await db.cooperative_write("state/run-1", lambda s: {"cancel_requested": True})
     await thief.renew()
     assert thief.state == {"cancel_requested": True}
 
 
-async def test_signal_race_merges_rather_than_clobbers(db, storage):
-    # A competing signal lands between our signal's read and its CAS; we
-    # must lose the CAS, re-read, and write both signals merged.
+async def test_cooperative_write_race_merges_rather_than_clobbers(db, storage):
+    # A competing write lands between our write's read and its CAS; we
+    # must lose the CAS, re-read, and write both merged.
     await db.lease("state/run-1", ttl=60, holder="w1", state_fn=lambda s: {"n": 0})
 
-    def rival_signal():
-        signal_sync(storage, "state/run-1", lambda s: {**s, "other": 1})
+    def rival_write():
+        cooperative_write_sync(storage, "state/run-1", lambda s: {**s, "other": 1})
 
-    with _interleave_before_next_put(storage, rival_signal):
-        written = await db.signal("state/run-1", lambda s: {**s, "cancel_requested": True})
+    with _interleave_before_next_put(storage, rival_write):
+        written = await db.cooperative_write("state/run-1", lambda s: {**s, "cancel_requested": True})
 
     assert written == {"n": 0, "other": 1, "cancel_requested": True}
 
 
-async def test_signal_observed_on_renew_without_fencing(db, storage):
-    # A signal moves the document's etag, so the holder's next guarded
-    # write necessarily loses its CAS; it must absorb the signal and
-    # retry, not raise LeaseLost or clobber the signal unread.
+async def test_cooperative_write_observed_on_renew_without_fencing(db, storage):
+    # A cooperative write moves the document's etag, so the holder's next
+    # guarded write necessarily loses its CAS; it must absorb the write
+    # and retry, not raise LeaseLost or clobber it unread.
     lease = await db.lease("state/run-1", ttl=60, holder="w1")
-    assert await db.signal("state/run-1", lambda s: {"cancel_requested": True}) == {
+    assert await db.cooperative_write("state/run-1", lambda s: {"cancel_requested": True}) == {
         "cancel_requested": True
     }
 
     await lease.renew()
     assert lease.state == {"cancel_requested": True}
-    assert lease.epoch == 1  # signaled, not fenced
+    assert lease.epoch == 1  # written to, not fenced
 
-    # The signal also survived in storage, and the lease still works.
+    # The write also survived in storage, and the lease still works.
     doc = json.loads(storage.get_object_sync("state/run-1").data)
     assert doc["state"] == {"cancel_requested": True}
     await lease.release()
 
 
-async def test_signal_on_missing_lease_returns_none(db):
-    assert await db.signal("state/nope", lambda s: {"x": 1}) is None
+async def test_cooperative_write_on_missing_lease_returns_none(db):
+    assert await db.cooperative_write("state/nope", lambda s: {"x": 1}) is None
 
 
-async def test_update_state_merges_concurrent_signal(db):
+async def test_update_state_merges_concurrent_cooperative_write(db):
     lease = await db.lease(
         "state/run-1", ttl=60, holder="w1", state_fn=lambda s: {"progress": 0}
     )
-    await db.signal("state/run-1", lambda s: {**s, "cancel_requested": True})
+    await db.cooperative_write("state/run-1", lambda s: {**s, "cancel_requested": True})
 
     # The holder's stale self.state has no flag; update_state must apply
     # fn to the absorbed fresh state so both writes survive.
@@ -372,18 +380,18 @@ async def test_update_state_merges_concurrent_signal(db):
     assert lease.state == written
 
 
-async def test_write_deliberately_discards_signal(db):
+async def test_write_deliberately_discards_cooperative_write(db):
     # Plain write replaces state unconditionally — documented behavior;
     # cooperating holders use renew/update_state instead.
     lease = await db.lease("state/run-1", ttl=60, holder="w1")
-    await db.signal("state/run-1", lambda s: {"cancel_requested": True})
+    await db.cooperative_write("state/run-1", lambda s: {"cancel_requested": True})
     await lease.write({"progress": 0.5})
     assert lease.state == {"progress": 0.5}
 
 
-async def test_release_preserves_signaled_state(db):
+async def test_release_preserves_cooperatively_written_state(db):
     lease = await db.lease("state/run-1", ttl=60, holder="w1")
-    await db.signal("state/run-1", lambda s: {"cancel_requested": True})
+    await db.cooperative_write("state/run-1", lambda s: {"cancel_requested": True})
     await lease.release()  # no explicit state: freshest state kept
 
     again = await db.lease("state/run-1", ttl=60, holder="w2")

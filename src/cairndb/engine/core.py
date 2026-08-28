@@ -112,17 +112,21 @@ class CairnDB:
             steal_if_expired=steal_if_expired, state_fn=state_fn,
         )
 
-    async def signal(self, key: str, state_fn: Callable[[Any], Any]) -> Any | None:
-        """Write a cooperative signal into the lease on `key` from outside
-        the lease (e.g. a cancel flag); the holder is not fenced and sees
-        the new state on its next ``renew``/``update_state``. Returns the
-        state written, or None when no lease document exists.
+    async def cooperative_write(
+        self, key: str, state_fn: Callable[[Any], Any]
+    ) -> Any | None:
+        """Write into the lease on `key` from outside the lease, without
+        fencing the holder (e.g. a cancel flag); the holder sees the new
+        state on its next ``renew``/``update_state``. Returns the state
+        written, or None when no lease document exists.
         """
-        return await coordination.signal(self.storage, key, state_fn)
+        return await coordination.cooperative_write(self.storage, key, state_fn)
 
-    def signal_sync(self, key: str, state_fn: Callable[[Any], Any]) -> Any | None:
-        """Sync twin of :meth:`signal`."""
-        return coordination.signal_sync(self.storage, key, state_fn)
+    def cooperative_write_sync(
+        self, key: str, state_fn: Callable[[Any], Any]
+    ) -> Any | None:
+        """Sync twin of :meth:`cooperative_write`."""
+        return coordination.cooperative_write_sync(self.storage, key, state_fn)
 
     def doc(self, key: str, model: type | None = None) -> Document:
         """A typed, etag-guarded document with a read-modify-write loop."""

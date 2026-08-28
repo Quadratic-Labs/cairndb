@@ -8,8 +8,9 @@ loops):
   winner's value
 - Lease: expiring ownership with epoch fencing — every write through the
   lease is etag-guarded, so a fenced holder can never publish an outcome;
-  outsiders can write cooperative signals (e.g. cancel flags) into the
-  lease's state via signal(), which the holder observes without fencing
+  outsiders can reach the holder through cooperative_write() (e.g. cancel
+  flags written into the lease's state), which the holder observes without
+  fencing
 - Document: a typed mutable document with a bounded CAS retry loop
 
 All primitives follow the storage layer's convention: the *_sync methods are
@@ -118,9 +119,9 @@ class Lease:
     advanced, the holder has been fenced and gets :class:`LeaseLost`.
 
     A guard failure on our *own* document (epoch and holder unchanged)
-    is a cooperative signal written by :func:`signal_sync` — the fresh
-    state is absorbed and the write retried, so signals are observed
-    rather than clobbered.
+    is a cooperative write made by :func:`cooperative_write_sync` — the
+    fresh state is absorbed and the write retried, so cooperative writes
+    are observed rather than clobbered.
 
     Obtain instances via :func:`acquire_sync` / :func:`acquire`, not the
     constructor.
@@ -185,13 +186,14 @@ class Lease:
 
         A failed guard is re-read: if epoch and holder are still ours,
         the content was changed by an out-of-band write to our own
-        document — a cooperative signal such as a cancel flag (see
-        :func:`signal_sync`). The fresh state is absorbed into
+        document — a cooperative write such as a cancel flag (see
+        :func:`cooperative_write_sync`). The fresh state is absorbed into
         ``self.state``, ``state_fn`` is re-applied to it, and the write
-        is retried on the fresh etag, so signals are observed rather
-        than clobbered. Any other content means we were fenced. Fencing
-        is detected on the first re-read regardless of the attempt bound
-        — the bound only limits patience against repeated signals.
+        is retried on the fresh etag, so cooperative writes are observed
+        rather than clobbered. Any other content means we were fenced.
+        Fencing is detected on the first re-read regardless of the attempt
+        bound — the bound only limits patience against repeated
+        cooperative writes.
         """
         if self._released:
             raise LeaseLost(f"lease on {self.key!r} was already released")
@@ -213,7 +215,7 @@ class Lease:
             doc = self._parse(current.data)
             if doc["epoch"] != self.epoch or doc["holder"] != self.holder:
                 break
-            # Our document, changed out-of-band: absorb the signal, retry.
+            # Our document, changed out-of-band: absorb the write, retry.
             self._etag = current.etag
             self.state = doc["state"]
 
@@ -223,10 +225,10 @@ class Lease:
     def renew_sync(self) -> None:
         """Extend the deadline by ttl. Raises LeaseLost if fenced.
 
-        State is preserved — including any signal written out-of-band
-        since our last write, which becomes visible on ``self.state``.
-        A heartbeat loop of ``renew`` + ``self.state`` checks is the
-        holder side of a cooperative cancel protocol.
+        State is preserved — including any cooperative write made
+        out-of-band since our last write, which becomes visible on
+        ``self.state``. A heartbeat loop of ``renew`` + ``self.state``
+        checks is the holder side of a cooperative cancel protocol.
         """
         self._guarded_put_sync(
             self.holder, Timestamp.now() + timedelta(seconds=self.ttl), lambda s: s
@@ -236,9 +238,10 @@ class Lease:
     def write_sync(self, state: Any) -> None:
         """Replace the lease's state payload under the ownership guard.
 
-        The replacement is unconditional: a signal written out-of-band
-        since our last write is discarded unread. Holders participating
-        in a signaling protocol should use :meth:`update_state_sync`.
+        The replacement is unconditional: a cooperative write made
+        out-of-band since our last write is discarded unread. Holders
+        participating in a cooperative-write protocol should use
+        :meth:`update_state_sync`.
         """
         self._guarded_put_sync(self.holder, self.deadline_at, lambda _: state)
 
@@ -246,7 +249,7 @@ class Lease:
         """Apply `fn` to the freshest state and write the result, guarded.
 
         `fn` must be pure — a lost guard re-reads and applies it again,
-        so a concurrently written signal ends up *inside* its input
+        so a concurrent cooperative write ends up *inside* its input
         rather than clobbered. Returns the state that was written.
         """
         self._guarded_put_sync(self.holder, self.deadline_at, fn)
@@ -374,10 +377,12 @@ async def acquire(
     )
 
 
-def signal_sync(storage: BlobStorage, key: str, state_fn: Callable[[Any], Any]) -> Any | None:
+def cooperative_write_sync(
+    storage: BlobStorage, key: str, state_fn: Callable[[Any], Any]
+) -> Any | None:
     """
-    Write a cooperative signal into a lease document's state from outside
-    the lease (e.g. a cancel flag for the current holder).
+    Write into a lease document's state from outside the lease, without
+    fencing the holder (e.g. a cancel flag for the current holder).
 
     A CAS read-modify-write of the ``state`` field only: epoch, holder
     and deadline are preserved, so the holder is not fenced — its next
@@ -385,7 +390,7 @@ def signal_sync(storage: BlobStorage, key: str, state_fn: Callable[[Any], Any]) 
     :meth:`Lease.renew_sync`). ``state_fn`` receives the current state
     and must be pure — a lost CAS race re-reads and calls it again.
 
-    The signal is advisory: a holder replacing state with a plain
+    The write is advisory: a holder replacing state with a plain
     ``write`` discards it; cooperating holders use ``renew`` /
     ``update_state`` and check ``lease.state``.
 
@@ -408,15 +413,20 @@ def signal_sync(storage: BlobStorage, key: str, state_fn: Callable[[Any], Any]) 
             if_match=current.etag,
         )
         if etag is not None:
-            logger.debug("lease_signaled", key=key, epoch=doc["epoch"])
+            logger.debug("lease_cooperative_write", key=key, epoch=doc["epoch"])
             return new_state
 
-    raise CairnDBError(f"signal on {key!r} kept conflicting after {_UPDATE_ATTEMPTS} attempts")
+    raise CairnDBError(
+        f"cooperative write on {key!r} kept conflicting "
+        f"after {_UPDATE_ATTEMPTS} attempts"
+    )
 
 
-async def signal(storage: BlobStorage, key: str, state_fn: Callable[[Any], Any]) -> Any | None:
-    """Async twin of :func:`signal_sync`."""
-    return await asyncio.to_thread(signal_sync, storage, key, state_fn)
+async def cooperative_write(
+    storage: BlobStorage, key: str, state_fn: Callable[[Any], Any]
+) -> Any | None:
+    """Async twin of :func:`cooperative_write_sync`."""
+    return await asyncio.to_thread(cooperative_write_sync, storage, key, state_fn)
 
 
 # ----------------------------------------------------------------------
