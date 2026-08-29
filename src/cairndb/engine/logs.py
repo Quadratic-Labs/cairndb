@@ -6,8 +6,9 @@ instead of the root ``log/`` prefix. It is implemented by routing the
 commit/snapshot storage API through the generic conditional-object API
 (NamespacedStorage), so backends need no changes.
 
-One sequencer per log: ordering is total *within* a log, and sharding
-across logs is the throughput story.
+One dense sequence per log: ordering is total *within* a log, and sharding
+across logs is the throughput story. There is no sequencer process; the
+bucket's put-if-absent arbitration sequences appends.
 
 Log names may contain [a-z0-9._-]; the root log is ``db.log()`` (name None)
 and keeps its original layout for backward compatibility.

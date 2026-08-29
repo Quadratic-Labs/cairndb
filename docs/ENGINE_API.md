@@ -160,7 +160,7 @@ A named log lives at `logs/{name}/log/{N:012d}.msgpack` with snapshots under
 `logs/{name}/snapshots/v{schema}/`, and is implemented by routing the
 existing commit protocol through the generic conditional-object API
 (`NamespacedStorage`). Same dense numbering, same put-if-absent arbitration,
-same Committer — one sequencer *per log*. Sharding across logs is the
+same Committer — one dense sequence *per log*. Sharding across logs is the
 scaling story; ordering is only total *within* a log.
 
 The root log keeps its original `log/` + `snapshots/` layout, so existing

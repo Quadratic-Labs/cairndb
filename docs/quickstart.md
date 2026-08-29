@@ -6,6 +6,7 @@ projections with zero servers — in 5 minutes.
 ## Prerequisites
 
 - Python 3.14 or later
+- Optionally, access to a distributed blob storage, but works with local filesystem too.
 
 ## Installation
 
