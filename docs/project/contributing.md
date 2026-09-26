@@ -168,9 +168,40 @@ force-push to it. Commits on release branches must be signed.
 
 ### A patch release (X.Y.Z)
 
-1. Land the fix on `main` first when it applies there, then cherry-pick
-   it onto `release/X.Y`. A fix that only concerns the old line goes
-   straight to the release branch.
+1. Land the fix on `main` first when it applies there, through a pull
+   request as usual. A fix that only concerns the old line goes straight
+   to the release branch; skip to step 2. Then bring the fix onto
+   `release/X.Y` in one of two ways:
+
+   - **Fast-forward**, when the release branch has no commits of its own
+     since it was cut, and everything on `main` since then should ship.
+     The branch then simply catches up with `main`, and no duplicate
+     commits appear:
+
+     ```bash
+     git fetch origin
+     git log --oneline origin/release/X.Y..origin/main   # all of these will ship
+     git switch release/X.Y && git merge --ff-only origin/main
+     ```
+
+   - **Cherry-pick** otherwise: when `main` has changes that must not ship
+     in a patch, or when the release branch already has commits of its
+     own. The version bump of any earlier patch release is such a
+     commit, so from the second patch release on a line, this is the
+     only option:
+
+     ```bash
+     git switch release/X.Y && git pull --ff-only
+     git cherry-pick -x <commit-on-main>
+     ```
+
+     A cherry-pick creates a new commit with the same change, so GitHub
+     then counts the release branch as both ahead of and behind `main`
+     by that commit. That is expected for maintenance branches, which
+     are never merged back.
+
+   `git merge --ff-only` refuses to run when a fast-forward is not
+   possible, so it is safe to try first.
 2. On `release/X.Y`, bump the version to X.Y.Z, add the changelog entry
    and its link, commit, and push. The docs republish if this is still
    the latest release branch.
