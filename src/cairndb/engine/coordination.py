@@ -123,8 +123,9 @@ class Lease:
     fresh state is absorbed and the write retried, so cooperative writes
     are observed rather than clobbered.
 
-    Obtain instances via :func:`acquire_sync` / :func:`acquire`, not the
-    constructor.
+    Obtain instances via :func:`acquire_sync` / :func:`acquire` — or, for
+    an ownership period that is already yours, :func:`attach_sync` /
+    :func:`attach` — not the constructor.
     """
 
     def __init__(
@@ -374,6 +375,72 @@ async def acquire(
             storage, key, ttl=ttl, holder=holder,
             steal_if_expired=steal_if_expired, state_fn=state_fn,
         )
+    )
+
+
+def attach_sync(
+    storage: BlobStorage,
+    key: str,
+    *,
+    holder: str,
+    ttl: float,
+) -> Lease | None:
+    """
+    Re-attach to the lease on `key` that `holder` owns right now.
+
+    Returns a handle onto the *current* ownership period: same epoch, same
+    deadline, nothing written. Use it when the process that acquired the
+    lease is not the process that must renew, write or release it — an HTTP
+    relay acting for a client that holds the task, a supervisor acting for a
+    worker it spawned, a process that restarted and remembered its holder id.
+
+    Returns None when the lease is not `holder`'s to act on: no document, a
+    released document, another holder, or a deadline in the past. An expired
+    lease is refused on purpose — a sweeper may already have concluded the
+    holder dead. Ownership is resumed with `acquire_sync`, which takes a
+    fresh epoch and fences whoever was there.
+
+    Unlike `acquire_sync` this writes nothing and never bumps the epoch: it
+    re-enters an ownership period instead of beginning one. The handle it
+    returns is indistinguishable from the acquirer's, because identity is
+    ``(key, epoch, holder)`` and the etag each handle caches self-heals in
+    :meth:`Lease._guarded_put_sync`. Two handles on one period therefore
+    converge on each other's writes rather than fencing each other.
+
+    Whoever knows the holder string can attach, and can therefore write.
+    Treat the string as a credential wherever it crosses a trust boundary.
+    """
+    check_key(key)
+    if ttl <= 0:
+        raise ValueError("ttl must be positive")
+    if not holder:
+        raise ValueError("holder is required: a lease with no holder is released")
+
+    current = storage.get_object_sync(key)
+    if current is None:
+        return None
+
+    doc = Lease._parse(current.data)
+    if doc["holder"] != holder or Lease._is_expired(doc, Timestamp.now()):
+        return None
+
+    logger.debug("lease_attached", key=key, epoch=doc["epoch"], holder=holder)
+    return Lease(
+        storage, key, ttl=ttl, epoch=doc["epoch"], holder=holder,
+        deadline_at=doc["deadline_at"], state=doc["state"], etag=current.etag,
+    )
+
+
+async def attach(
+    storage: BlobStorage,
+    key: str,
+    *,
+    holder: str,
+    ttl: float,
+) -> Lease | None:
+    """Async twin of :func:`attach_sync`."""
+    return await asyncio.to_thread(
+        lambda: attach_sync(storage, key, holder=holder, ttl=ttl)
     )
 
 

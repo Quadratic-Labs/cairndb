@@ -101,6 +101,10 @@ await lease.write({"progress": 0.5})       # guarded payload replace (discards c
 await lease.update_state(lambda s: {**s, "progress": 0.5})  # guarded RMW (preserves cooperative writes)
 await lease.release(state={"status": "completed"})
 
+# re-attach to an ownership period that is already ours, from anywhere:
+same = await db.attach_lease("state/etl/run-123", holder=worker_id, ttl=120)
+# None => absent, released, someone else's, or expired
+
 # from outside the lease — cooperative write to the holder, no fencing:
 await db.cooperative_write("state/etl/run-123",
                            lambda s: {**(s or {}), "cancel_requested": True})
@@ -124,6 +128,27 @@ Semantics:
   name now belongs to the out-of-band signal *objects* layers above build.)
 - Expiry is judged against the holder-written `deadline_at`; clocks only
   need to agree to within the ttl (choose generous ttls).
+- `db.attach_lease(key, holder=…, ttl=…)` rebuilds the holder's handle from
+  the document: **one read, no write, no epoch bump, no deadline change**.
+  `lease` *begins* an ownership period and must bump the epoch to fence the
+  previous one; `attach_lease` *re-enters* the current period, so it must
+  not. It returns None when the document is absent, released, held by
+  someone else, or expired — an expired lease is resumed with `lease`,
+  which takes a fresh epoch, because a sweeper may already have concluded
+  the holder dead.
+- Two handles on one ownership period do **not** fence each other:
+  ownership identity is `(key, epoch, holder)` and the etag each handle
+  caches self-heals on a failed guard (the same absorb-and-retry path that
+  makes cooperative writes observable). So the acquirer's handle and an
+  attached handle converge on each other's writes. This is what lets a
+  lease outlive the process that took it: an HTTP relay renewing for the
+  client that holds a task, a supervisor acting for a worker it spawned, a
+  restarted process that remembered its holder id.
+- `attach_lease` makes the holder string a **credential**: whoever knows it
+  can attach, and can therefore renew, write and release. Inside one
+  deployment that changes nothing (reaching the bucket is already
+  authority). Where the string crosses a trust boundary, mint it with
+  `secrets.token_urlsafe`, not with anything guessable.
 
 ### doc — typed document with RMW retry
 
