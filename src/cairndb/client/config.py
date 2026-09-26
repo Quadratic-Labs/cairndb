@@ -78,7 +78,8 @@ class ClientConfig:
         """Build configuration from ``CAIRNDB_*`` environment variables.
 
         Storage variables are handled by :meth:`StorageConfig.from_env`;
-        client variables:
+        client variables::
+
             CAIRNDB_DB_PATH        - SQLite projection path
             CAIRNDB_POLL_INTERVAL  - Poll interval seconds
             CAIRNDB_SCHEMA_VERSION - Projection schema version

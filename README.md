@@ -28,13 +28,14 @@ result = await db.claim("dispatch/etl:2026-08-10", {"run": 1})  # exactly-one wi
 lease  = await db.lease("state/run-1", ttl=120)                 # fenced ownership
 seq    = await db.log("orders").append(event)                   # durable, ordered
 async with db.transact() as tx:                                 # multi-key atomicity
-    tx.put("accounts/alice", alice)
-    tx.put("accounts/bob", bob)
+    tx.put("accounts/alice", alice_bytes)
+    tx.put("accounts/bob", bob_bytes)
 proj   = db.projection("orders_view", log="orders")             # SQL over the log
 ```
 
-The full design and semantics live in [docs/ENGINE_API.md](docs/ENGINE_API.md);
-the storage invariants in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The documentation lives in [docs/](docs/index.md): start with the
+[quickstart](docs/getting-started/quickstart.md), and see the
+[concepts](docs/concepts/index.md) for the semantics of each layer.
 
 ## Use Cases
 
@@ -43,9 +44,7 @@ the storage invariants in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - Strong auditability and determinism requirements: event sourcing,
   time-travel reads, rebuild-anywhere recovery
 - Coordination state for serverless/scale-to-zero systems: workflow
-  ownership, exactly-once dispatch, checkpoints (this is how
-  [Flowlet](https://github.com/Quadratic-Labs/flowlet) runs its control
-  plane)
+  ownership, exactly-once dispatch, checkpoints
 - "I want a database but refuse to run or rent a database server"
 
 ## How It Works
@@ -89,7 +88,13 @@ pip install cairndb[cli]       # + `cairndb` CLI (snapshot/gc/rebuild jobs)
 ## Quick Start
 
 ```python
+import aiosqlite
 from cairndb import CairnDB, Event, EventType, SchemaVersion, Timestamp
+
+async def init_users(db_path: str) -> None:
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)")
+        await conn.commit()
 
 db = CairnDB.configure({"storage": {"type": "filesystem", "path": "./data"}})
 
@@ -99,7 +104,7 @@ seq = await db.log("users").append(
         event_type=EventType("user.created"),
         timestamp=Timestamp.now(),
         payload={"id": 1, "name": "Alice"},
-        schema_version=SchemaVersion("1.0.0"),
+        schema_version=SchemaVersion("1"),
     )
 )
 
@@ -137,10 +142,11 @@ export CAIRNDB_STORAGE_TYPE=s3 CAIRNDB_S3_BUCKET=my-bucket
 
 cairndb snapshot --handlers myapp.projections:registry \
                   --init-schema myapp.projections:init_schema
+cairndb snapshot --log orders --handlers myapp.projections:orders_registry
 cairndb gc --keep-snapshots 3            # add --prune-log to drop covered history
 ```
 
-See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough,
+See [docs/getting-started/quickstart.md](docs/getting-started/quickstart.md) for the full walkthrough,
 including the lower-level `Committer`/`HandlerRegistry` API the facade is
 built on.
 

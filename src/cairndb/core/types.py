@@ -16,6 +16,7 @@ class SequenceNumber:
     Global sequence number: position of an event in the commit log.
 
     An event is totally ordered by (commit, index):
+
     - commit: the dense, monotonically increasing commit object number,
       assigned by the bucket via put-if-absent
     - index: the event's position within its commit

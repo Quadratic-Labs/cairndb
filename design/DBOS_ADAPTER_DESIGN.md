@@ -134,4 +134,4 @@ App-side datasource (aiosqlite engine) is a later phase via SQLAlchemy events.
   (was unpacked in a session scratchpad; re-download to re-inspect).
 - CairnDB primitives used: `Committer.append` (log) and the generic conditional
   object store `get_object`/`put_object` with `if_match`/`if_absent`
-  (see "Generic Conditional Object Store" in [ARCHITECTURE.md](ARCHITECTURE.md)).
+  (see the [storage model](../docs/concepts/storage-model.md)).

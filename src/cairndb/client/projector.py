@@ -28,11 +28,14 @@ class Projector:
     Manages SQLite projection updates with atomic swaps.
 
     Update workflow:
+
     1. Build the new database:
+
        - fresh start with a snapshot available: download it as the base
          (the snapshot carries schema and data)
        - otherwise: copy projection.db -> projection.db.new (COW if available),
          or create an empty base (metadata + init_schema) if nothing exists
+
     2. Replay new commits onto the new database (one transaction each)
     3. Atomically rename: projection.db.new -> projection.db
 

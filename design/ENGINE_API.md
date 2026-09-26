@@ -19,7 +19,7 @@ as a client-library primitive:
 | 3 | Projections (`projection`) | indexes / materialized views | existed (replay/updater), made declarative |
 | 4 | Lifecycle & watch (`wait_for`, `tail`, jobs) | vacuum, change feeds | jobs existed; watch helpers new |
 
-All invariants of [ARCHITECTURE.md](ARCHITECTURE.md) hold unchanged. The
+All invariants of the [storage model](../docs/concepts/storage-model.md) hold unchanged. The
 engine is a facade over existing machinery, not a rewrite.
 
 ---
@@ -48,7 +48,7 @@ One engine = one bucket (or one prefix of one bucket). Everything hangs off
 ## Layer 0 — Objects
 
 The raw conditional KV, namespaced as `db.objects`. Exactly the semantics of
-the generic conditional object store in ARCHITECTURE.md:
+the generic conditional object store in the [storage model](../docs/concepts/storage-model.md):
 
 ```python
 obj  = await db.objects.get("config/app.json")            # StoredObject(data, etag) | None

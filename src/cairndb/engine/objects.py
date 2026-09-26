@@ -28,10 +28,9 @@ class Objects:
     """Conditional key-addressed objects: get / put / delete / list / wait_for.
 
     Semantics are exactly those of the underlying store (see
-    ARCHITECTURE.md, "Generic Conditional Object Store"): etags are opaque
-    and backend-native; ``put`` with ``if_match`` is a compare-and-swap,
-    with ``if_absent`` a put-if-absent, and returns None when the
-    precondition failed.
+    docs/concepts/storage-model.md): etags are opaque and backend-native;
+    ``put`` with ``if_match`` is a compare-and-swap, with ``if_absent`` a
+    put-if-absent, and returns None when the precondition failed.
     """
 
     def __init__(self, storage: BlobStorage):

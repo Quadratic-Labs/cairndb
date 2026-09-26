@@ -1,6 +1,6 @@
 """CairnDB engine: the serverless database-engine facade.
 
-See docs/ENGINE_API.md for the design. Layers:
+See docs/concepts/ for the semantics of each layer:
 
 - objects: conditional key-value store (Objects)
 - coordination: claim / Lease / Document

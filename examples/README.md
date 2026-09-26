@@ -4,7 +4,7 @@ Example applications built on the current, serverless architecture:
 a `Committer` writes events directly to storage, and a `CairnDBClient`
 reads them back through a local SQLite projection. There is no server.
 
-For a guided walkthrough, start with [`docs/QUICKSTART.md`](../docs/QUICKSTART.md).
+For a guided walkthrough, start with [`docs/getting-started/quickstart.md`](../docs/getting-started/quickstart.md).
 
 ## simple_app
 
