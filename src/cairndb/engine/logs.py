@@ -37,9 +37,7 @@ _LOG_NAME_RE = re.compile(r"^[a-z0-9._-]+$")
 def check_log_name(name: str) -> None:
     """Validate a log name (it becomes a key prefix segment)."""
     if not _LOG_NAME_RE.match(name):
-        raise ValueError(
-            f"invalid log name {name!r}: must match {_LOG_NAME_RE.pattern}"
-        )
+        raise ValueError(f"invalid log name {name!r}: must match {_LOG_NAME_RE.pattern}")
 
 
 class NamespacedStorage(BlobStorage):
@@ -100,9 +98,7 @@ class NamespacedStorage(BlobStorage):
         if obj is None:
             from cairndb.core.exceptions import StorageError
 
-            raise StorageError(
-                f"Snapshot v{schema}/{number} not found under {self.namespace}/"
-            )
+            raise StorageError(f"Snapshot v{schema}/{number} not found under {self.namespace}/")
         return obj.data
 
     async def delete_snapshots_before(self, schema: str, number: int) -> int:
@@ -136,6 +132,20 @@ class NamespacedStorage(BlobStorage):
         return self.base.list_objects_sync(prefix)
 
 
+def log_storage(base: BlobStorage, name: str | None) -> BlobStorage:
+    """The storage view holding log `name`'s commits and snapshots.
+
+    The root log (name None) is the base storage itself; a named log is the
+    base namespaced under ``logs/{name}/``. Commit/snapshot consumers — the
+    Committer, projections, the snapshot and GC jobs — operate on the log
+    this view selects.
+    """
+    if name is None:
+        return base
+    check_log_name(name)
+    return NamespacedStorage(base, f"logs/{name}")
+
+
 class Log:
     """A named (or the root) commit log: append, read, tail.
 
@@ -151,11 +161,8 @@ class Log:
         committer_config: CommitterConfig | None = None,
         revalidate: RevalidateHook | None = None,
     ):
-        if name is not None:
-            check_log_name(name)
-            storage = NamespacedStorage(storage, f"logs/{name}")
         self.name = name
-        self.storage = storage
+        self.storage = log_storage(storage, name)
         self._committer_config = committer_config
         self._revalidate = revalidate
         self._committer: Committer | None = None

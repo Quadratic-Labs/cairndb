@@ -35,6 +35,12 @@ def snapshot_key(schema: str, number: int) -> str:
     return f"{snapshot_prefix(schema)}{number:0{COMMIT_WIDTH}d}.sqlite"
 
 
+#: Default projection schema version, shared by every component that names
+#: snapshots (Projection, ClientConfig, SnapshotBuilder, the CLI) so that
+#: defaults alone always agree on the snapshots/v{version}/ prefix.
+DEFAULT_SCHEMA_VERSION = "1"
+
+
 def snapshot_prefix(schema: str) -> str:
     """Relative key prefix of all snapshots for a projection schema version."""
     return f"snapshots/v{schema}/"

@@ -1,9 +1,17 @@
 """Tests for storage and client configuration."""
 
-import pytest
+import inspect
 
+import pytest
+import typer.main
+
+from cairndb import CairnDB
+from cairndb.cli import app
 from cairndb.client.config import ClientConfig
 from cairndb.core.exceptions import ConfigurationError
+from cairndb.engine.projection import Projection
+from cairndb.jobs.snapshot import SnapshotBuilder
+from cairndb.storage.base import DEFAULT_SCHEMA_VERSION
 from cairndb.storage.config import (
     AzureStorageConfig,
     FilesystemStorageConfig,
@@ -64,6 +72,24 @@ class TestStorageConfig:
         assert config.bucket == "my-bucket"
         assert config.prefix == "app1"
 
+    def test_from_env_gcs_bucket(self, monkeypatch):
+        monkeypatch.setenv("CAIRNDB_STORAGE_TYPE", "gcs")
+        monkeypatch.setenv("CAIRNDB_GCS_BUCKET", "gcs-bucket")
+        monkeypatch.setenv("CAIRNDB_S3_BUCKET", "s3-bucket")
+
+        config = StorageConfig.from_env()
+
+        assert isinstance(config, GCSStorageConfig)
+        assert config.bucket == "gcs-bucket"  # the GCS variable wins
+
+    def test_from_env_gcs_bucket_falls_back_to_s3_variable(self, monkeypatch):
+        # Deployments predating CAIRNDB_GCS_BUCKET keep working.
+        monkeypatch.setenv("CAIRNDB_STORAGE_TYPE", "gcs")
+        monkeypatch.delenv("CAIRNDB_GCS_BUCKET", raising=False)
+        monkeypatch.setenv("CAIRNDB_S3_BUCKET", "legacy-bucket")
+
+        assert StorageConfig.from_env().bucket == "legacy-bucket"
+
     def test_from_env_missing_required_field(self, monkeypatch):
         monkeypatch.setenv("CAIRNDB_STORAGE_TYPE", "filesystem")
         monkeypatch.delenv("CAIRNDB_STORAGE_PATH", raising=False)
@@ -79,7 +105,7 @@ class TestClientConfig:
         assert config.storage is None
         assert config.db_path == "./projection.db"
         assert config.poll_interval_seconds == 5.0
-        assert config.schema_version == "1.0.0"
+        assert config.schema_version == DEFAULT_SCHEMA_VERSION == "1"
 
     def test_new_db_path(self):
         config = ClientConfig(db_path="/data/proj.db")
@@ -116,3 +142,40 @@ class TestClientConfig:
         assert isinstance(config.storage, FilesystemStorageConfig)
         assert config.storage.path == "/x"
         assert config.db_path == "/y.db"
+
+
+def test_every_component_defaults_to_the_same_schema_version():
+    """Snapshots written with defaults must be found by clients with defaults.
+
+    Regression: Projection defaulted to "1" (snapshots/v1/) while the CLI,
+    ClientConfig and SnapshotBuilder defaulted to "1.0.0" (snapshots/v1.0.0/),
+    so default snapshots were silently never used.
+    """
+
+    def default(fn, name):
+        return inspect.signature(fn).parameters[name].default
+
+    cli = typer.main.get_command(app)
+    cli_defaults = {
+        name: next(p.default for p in cli.commands[name].params if p.name == "schema_version")
+        for name in ("snapshot", "gc")
+    }
+
+    assert {
+        "ClientConfig": ClientConfig().schema_version,
+        "Projection": default(Projection.__init__, "version"),
+        "CairnDB.projection": default(CairnDB.projection, "version"),
+        "SnapshotBuilder": default(SnapshotBuilder.__init__, "schema_version"),
+        "cli snapshot": cli_defaults["snapshot"],
+        "cli gc": cli_defaults["gc"],
+    } == dict.fromkeys(
+        [
+            "ClientConfig",
+            "Projection",
+            "CairnDB.projection",
+            "SnapshotBuilder",
+            "cli snapshot",
+            "cli gc",
+        ],
+        DEFAULT_SCHEMA_VERSION,
+    )

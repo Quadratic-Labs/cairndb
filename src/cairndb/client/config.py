@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from cairndb.storage.base import BlobStorage
+from cairndb.storage.base import DEFAULT_SCHEMA_VERSION, BlobStorage
 from cairndb.storage.config import StorageConfig
 
 
@@ -38,7 +38,7 @@ class ClientConfig:
     db_path: str = "./projection.db"
     poll_interval_seconds: float = 5.0
     use_reflink: bool = True
-    schema_version: str = "1.0.0"
+    schema_version: str = DEFAULT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         if not 0.0 < self.poll_interval_seconds <= 3600.0:
@@ -87,5 +87,5 @@ class ClientConfig:
             storage=StorageConfig.from_env(),
             db_path=os.environ.get("CAIRNDB_DB_PATH", "./projection.db"),
             poll_interval_seconds=float(os.environ.get("CAIRNDB_POLL_INTERVAL", "5.0")),
-            schema_version=os.environ.get("CAIRNDB_SCHEMA_VERSION", "1.0.0"),
+            schema_version=os.environ.get("CAIRNDB_SCHEMA_VERSION", DEFAULT_SCHEMA_VERSION),
         )

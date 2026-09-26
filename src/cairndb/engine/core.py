@@ -22,6 +22,7 @@ from typing import Any, Self
 
 import structlog
 
+from cairndb.client.registry import HandlerRegistry
 from cairndb.core.types import SequenceNumber
 from cairndb.engine import coordination
 from cairndb.engine.coordination import ClaimResult, Document, Lease
@@ -29,7 +30,7 @@ from cairndb.engine.logs import Log
 from cairndb.engine.objects import Objects
 from cairndb.engine.projection import Projection, SchemaInitializer
 from cairndb.engine.transactions import Transaction, TransactionManager
-from cairndb.storage.base import BlobStorage
+from cairndb.storage.base import DEFAULT_SCHEMA_VERSION, BlobStorage
 from cairndb.storage.config import StorageConfig
 
 logger = structlog.get_logger(__name__)
@@ -184,13 +185,19 @@ class CairnDB:
         self,
         name: str,
         *,
-        version: str = "1",
+        version: str = DEFAULT_SCHEMA_VERSION,
         db_path: str | None = None,
         log: str | None = None,
         poll_interval: float = 5.0,
         init_schema: SchemaInitializer | None = None,
+        registry: HandlerRegistry | None = None,
     ) -> Projection:
-        """A declarative SQLite projection of one log (root by default)."""
+        """A declarative SQLite projection of one log (root by default).
+
+        Pass ``registry`` to replay with an existing HandlerRegistry — the
+        same one ``cairndb snapshot --handlers`` loads — instead of
+        registering handlers with :meth:`Projection.on`.
+        """
         projection = Projection(
             self.log(log).storage,
             name,
@@ -198,6 +205,7 @@ class CairnDB:
             db_path=db_path,
             poll_interval=poll_interval,
             init_schema=init_schema,
+            registry=registry,
         )
         self._projections.append(projection)
         return projection
