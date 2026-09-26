@@ -75,8 +75,8 @@ these variables.
 | `CAIRNDB_AZURE_CONNECTION_STRING` | azure | `connection_string` |
 | `CAIRNDB_AZURE_ACCOUNT_URL` | azure | `account_url` |
 
-For GCS, `CAIRNDB_GCS_BUCKET` wins. `CAIRNDB_S3_BUCKET` is still read
-when it is unset, for configurations from CAIRNDB 0.4.0 and earlier.
+For GCS, `CAIRNDB_GCS_BUCKET` wins. `CAIRNDB_S3_BUCKET` is read as a
+fallback when it is unset.
 
 ### CLI variables
 
