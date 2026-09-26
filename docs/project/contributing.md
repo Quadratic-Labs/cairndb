@@ -158,20 +158,12 @@ force-push to it. Commits on release branches must be signed.
    git push -u origin release/X.Y
    ```
 
-3. Tag the release with a signed tag, then push the tag:
+3. Tag the release with a signed tag, then push the tag. The push
+   publishes the release (see [Publishing a release](#publishing-a-release)):
 
    ```bash
    git tag -s vX.Y.0 -m "CairnDB X.Y.0"
    git push origin vX.Y.0
-   ```
-
-4. Create the GitHub Release, using the changelog section as notes:
-
-   ```bash
-   V=X.Y.0
-   awk -v v="$V" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f && !/^\[[^]]*\]: /' \
-     CHANGELOG.md > /tmp/notes.md
-   gh release create "v$V" --title "CairnDB $V" --notes-file /tmp/notes.md
    ```
 
 ### A patch release (X.Y.Z)
@@ -182,10 +174,34 @@ force-push to it. Commits on release branches must be signed.
 2. On `release/X.Y`, bump the version to X.Y.Z, add the changelog entry
    and its link, commit, and push. The docs republish if this is still
    the latest release branch.
-3. Tag `vX.Y.Z` on the release branch, push the tag, and create the
-   GitHub Release as above.
+3. Tag `vX.Y.Z` on the release branch with a signed tag, and push it.
+   That publishes the release, as above.
 4. Bring the changelog entry back to `main`, so `main`'s changelog lists
    every release.
+
+### Publishing a release
+
+Pushing a `vX.Y.Z` tag runs the `Publish` workflow
+(`.github/workflows/publish.yml`):
+
+1. **Build:** it fails unless the tag equals `v` plus the version in
+   `pyproject.toml`. It then builds the sdist and wheel and checks them
+   with `twine check --strict`.
+2. **PyPI:** it uploads the distributions to
+   [PyPI](https://pypi.org/project/cairndb/) with Trusted Publishing,
+   through the `pypi` deployment environment. No API token is stored
+   anywhere: PyPI trusts this workflow in this repository.
+3. **GitHub Release:** it creates the release for the tag, with the
+   matching `CHANGELOG.md` section as notes and the distributions
+   attached.
+
+PyPI versions are immutable. A version can never be uploaded twice, even
+after it is deleted, so check the version and the changelog before
+pushing the tag. A mistake means a new patch version.
+
+The trust between PyPI and this repository is configured on PyPI, in the
+`cairndb` project's publishing settings: owner `Quadratic-Labs`,
+repository `cairndb`, workflow `publish.yml`, environment `pypi`.
 
 ### Artifacts
 

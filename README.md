@@ -34,9 +34,10 @@ proj   = db.projection("orders_view", log="orders")             # SQL over the l
 ```
 
 The documentation is published at **<https://quadratic-labs.github.io/cairndb/>**
-(sources in [docs/](docs/index.md)): start with the
-[quickstart](docs/getting-started/quickstart.md), and see the
-[concepts](docs/concepts/index.md) for the semantics of each layer.
+(sources in [`docs/`](https://github.com/Quadratic-Labs/cairndb/tree/main/docs)). Start with
+the [quickstart](https://quadratic-labs.github.io/cairndb/getting-started/quickstart.html),
+and see the [concepts](https://quadratic-labs.github.io/cairndb/concepts/index.html) for the
+semantics of each layer.
 
 ## Use Cases
 
@@ -147,7 +148,7 @@ cairndb snapshot --log orders --handlers myapp.projections:orders_registry
 cairndb gc --keep-snapshots 3            # add --prune-log to drop covered history
 ```
 
-See [docs/getting-started/quickstart.md](docs/getting-started/quickstart.md) for the full walkthrough,
+See the [quickstart](https://quadratic-labs.github.io/cairndb/getting-started/quickstart.html) for the full walkthrough,
 including the lower-level `Committer`/`HandlerRegistry` API the facade is
 built on.
 
@@ -165,4 +166,4 @@ built on.
 
 ## License
 
-MIT
+[MIT](https://github.com/Quadratic-Labs/cairndb/blob/main/LICENSE) © 2026 Thomas Zamojski

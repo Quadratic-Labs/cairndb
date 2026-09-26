@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=77.0"]  # >=77: SPDX license expressions (PEP 639)
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,14 +8,14 @@ version = "0.4.0"
 description = "Serverless database engine on blob storage: commit logs, coordination primitives, multi-key transactions, and SQLite projections — no servers anywhere"
 readme = "README.md"
 requires-python = ">=3.14"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     {name = "CairnDB Contributors"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
 ]
@@ -81,6 +81,9 @@ cairndb = "cairndb.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+cairndb = ["py.typed"]  # PEP 561: ship the inline type hints
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
