@@ -32,6 +32,11 @@ dependencies = [
     "structlog>=24.1.0",
 ]
 
+[project.urls]
+Documentation = "https://quadratic-labs.github.io/cairndb/"
+Repository = "https://github.com/Quadratic-Labs/cairndb"
+Changelog = "https://github.com/Quadratic-Labs/cairndb/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 # Storage backends (filesystem needs no extra)
 s3 = ["boto3>=1.35.0"]  # >=1.35 for IfNoneMatch conditional writes

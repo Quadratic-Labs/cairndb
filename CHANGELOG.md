@@ -38,7 +38,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before
   passes `--init-schema`.
 - Documentation site (Sphinx + MyST): quickstart, concepts, guides,
   deployment guides for local, AWS, Google Cloud, and Azure, and a
-  generated API and CLI reference.
+  generated API and CLI reference. It is published to GitHub Pages from
+  the latest `release/X.Y` branch, and built as a check on pull requests.
 - Opt-in live integration suite against real Azure Blob Storage
   (`make azure-integration`).
 - Mutation testing with mutmut. The codebase is mutant-clean.

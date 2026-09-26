@@ -63,6 +63,9 @@ autodoc_default_options = {
 autoclass_content = "both"  # class docstring + __init__ Args
 autodoc_typehints = "signature"
 autodoc_preserve_defaults = True
+# The cloud SDKs are optional extras; mock them so the storage backends'
+# reference builds with only the docs extra installed.
+autodoc_mock_imports = ["boto3", "botocore", "google", "azure"]
 
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
@@ -75,6 +78,7 @@ intersphinx_mapping = {
 # -- HTML --------------------------------------------------------------------
 
 html_theme = "furo"
+html_baseurl = "https://quadratic-labs.github.io/cairndb/"  # published by .github/workflows/docs.yml
 html_title = f"CairnDB {release}"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
