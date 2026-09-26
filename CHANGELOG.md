@@ -8,6 +8,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-26
+
+First release published to PyPI (`pip install cairndb`).
+
 ### Added
 
 - `LICENSE` file with the MIT license text, shipped in the sdist and
@@ -70,5 +74,6 @@ bucket's conditional writes arbitrate concurrency.
   opt-in live Azure suite, and mutation testing (the codebase is
   mutant-clean).
 
-[Unreleased]: https://github.com/Quadratic-Labs/cairndb/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Quadratic-Labs/cairndb/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/Quadratic-Labs/cairndb/releases/tag/v0.4.1
 [0.4.0]: https://github.com/Quadratic-Labs/cairndb/releases/tag/v0.4.0
