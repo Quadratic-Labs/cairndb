@@ -125,8 +125,8 @@ the `Docs` GitHub Actions workflow (`.github/workflows/docs.yml`):
 Cutting a release therefore publishes its docs:
 
 ```bash
-git switch -c release/0.5 main
-git push -u origin release/0.5
+git switch -c release/0.4 main
+git push -u origin release/0.4
 ```
 
 ## Release

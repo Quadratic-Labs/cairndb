@@ -58,10 +58,8 @@ CAIRNDB_STORAGE_PREFIX=prod
 # CAIRNDB_GCS_CREDENTIALS_PATH=/path/key.json   # only outside Google Cloud
 ```
 
-:::{note}
-Configurations from CairnDB 0.4.0 and earlier set the GCS bucket through
-`CAIRNDB_S3_BUCKET`. That still works when `CAIRNDB_GCS_BUCKET` is unset.
-:::
+`CAIRNDB_S3_BUCKET` is also accepted as a fallback for the GCS bucket
+when `CAIRNDB_GCS_BUCKET` is unset.
 
 ### Cloud Run services
 

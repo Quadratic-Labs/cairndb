@@ -6,9 +6,9 @@
 one the clients read. The projection's `version` selects
 `snapshots/v{version}/`, and `cairndb snapshot --schema-version` selects
 where the job writes. Both default to `"1"`, so a mismatch comes from
-setting only one of them. It can also come from a client built with
-`ClientConfig(schema_version="1.0.0")`, the default in CairnDB 0.4.0 and
-earlier.
+setting only one of them, for example `version="2"` on the projection
+without `--schema-version 2` on the job, or an explicit
+`ClientConfig(schema_version=...)` that differs from the job's.
 
 **Fix:** pass `--schema-version` equal to the projection's `version`.
 List the bucket's `snapshots/` (or `logs/{name}/snapshots/`) prefix to see

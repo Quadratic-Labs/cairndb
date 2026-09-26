@@ -8,87 +8,51 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-26
+
+First public release. CairnDB (formerly ChroniQL) is a serverless
+database engine on blob storage: all state lives in a bucket, and the
+bucket's conditional writes arbitrate concurrency.
+
 ### Added
 
-- `db.attach_lease(key, holder=..., ttl=...)` (and `attach_lease_sync`):
-  re-attach to an ownership period you already hold, from any process.
-  One read, no write, no epoch bump.
-- `db.cooperative_write(key, fn)`: write into a lease's state from
-  outside the lease without fencing the holder, for example a cancel
-  flag. Guarded lease writes absorb it instead of clobbering it.
-- `state_fn` on `db.lease(...)`: make acquisition an atomic state
-  transition. An exception in `state_fn` aborts the acquisition with
-  nothing written.
-- `BlobStorage.append_object_sync` / `append_object`: atomic appends,
-  native on the filesystem backend and on Azure (Append Blobs), with a
-  compare-and-swap fallback elsewhere.
-- `Timestamp`: ordering, `timedelta` arithmetic, and a UUIDv7 round trip
-  (`to_uuid7` / `from_uuid7`).
-- `--log NAME` option (or `CAIRNDB_LOG`) on `cairndb snapshot`, `gc`,
-  and `rebuild`, to run the jobs against a named log.
-- `db.projection(..., registry=...)`: build a projection on an existing
-  `HandlerRegistry`, so the application and the snapshot job share one
-  set of handlers.
-- `cairndb.engine.log_storage(storage, name)`: the storage view of a
-  named log, for the lower-level API and the jobs.
-- `CAIRNDB_GCS_BUCKET` environment variable for the GCS backend.
-- `DEFAULT_SCHEMA_VERSION` constant in `cairndb.storage.base`.
-- Azure templates: a `snapshotLogs` parameter (one snapshot and GC job
-  pair per log) and a `schemaVersion` parameter. The snapshot job now
-  passes `--init-schema`.
-- Documentation site (Sphinx + MyST): quickstart, concepts, guides,
+- **Engine facade** `CairnDB`, over five layers:
+  - **Objects**: an etag-guarded key-value store with compare-and-swap,
+    put-if-absent, and `wait_for` polling.
+  - **Coordination**:
+    - `claim`: a unique constraint whose losers converge on the winner's
+      value.
+    - `lease`: expiring, epoch-fenced ownership. It supports `state_fn`
+      for atomic acquire-with-transition, `cooperative_write` for
+      unfenced writes from outside the lease, and `attach_lease` to
+      re-enter an ownership period from another process.
+    - `doc`: a typed document with a retrying read-modify-write loop.
+  - **Logs**: named, dense, totally ordered commit logs, with group
+    commit, a durable acknowledgement, and revalidate hooks.
+  - **Transactions**: optimistic multi-key atomicity, coordinated by a
+    system log, with crash recovery.
+  - **Projections**: declarative SQLite projections, built by
+    deterministic replay with atomic swaps. They support snapshots, time
+    travel (`as_of`), read-your-writes (`wait_for`), and handler
+    registries shared with the snapshot job.
+- **Storage backends**: filesystem, Amazon S3 (and S3-compatible stores
+  with conditional writes), Google Cloud Storage, and Azure Blob Storage,
+  including hierarchical-namespace accounts. `append_object` is native on
+  the filesystem backend and on Azure, with a compare-and-swap fallback
+  elsewhere.
+- **`cairndb` CLI**: `snapshot`, `gc`, and `rebuild` jobs, each able to
+  target a named log with `--log`. Configuration comes from `CAIRNDB_*`
+  environment variables.
+- **Deployment**: a jobs container image, and Azure Container Apps Bicep
+  templates with one snapshot and GC job pair per log.
+- **Documentation site** (Sphinx + MyST): quickstart, concepts, guides,
   deployment guides for local, AWS, Google Cloud, and Azure, and a
   generated API and CLI reference. It is published to GitHub Pages from
   the latest `release/X.Y` branch, and built as a check on pull requests.
-- Opt-in live integration suite against real Azure Blob Storage
-  (`make azure-integration`).
-- Mutation testing with mutmut. The codebase is mutant-clean.
+- **Testing**: race tests on the filesystem backend, mocked-SDK contract
+  tests for every cloud backend, end-to-end crash-and-recovery tests, an
+  opt-in live Azure suite, and mutation testing (the codebase is
+  mutant-clean).
 
-### Changed
-
-- **Breaking:** the default projection schema version is now `"1"`
-  everywhere (`ClientConfig`, `SnapshotBuilder`, `CAIRNDB_SCHEMA_VERSION`,
-  and the CLI's `--schema-version`), matching `db.projection()`.
-  Previously some components defaulted to `"1.0.0"` and others to `"1"`,
-  so snapshots built with the defaults were never found by default
-  projections. Pass `1.0.0` explicitly to keep using existing
-  `snapshots/v1.0.0/` snapshots.
-- **Breaking:** `Projection.registry` is read-only. Assigning to it had no
-  effect before; it now raises `AttributeError`. Pass `registry=`
-  instead.
-- **Breaking:** the Azure templates' `snapshotHandlersRef` parameter is
-  replaced by `snapshotLogs`.
-- Client and storage configurations are stdlib dataclasses validated at
-  construction. The `pydantic` dependency is dropped.
-
-### Deprecated
-
-- Setting the GCS bucket through `CAIRNDB_S3_BUCKET`. It still works when
-  `CAIRNDB_GCS_BUCKET` is unset.
-
-### Fixed
-
-- Azure: on hierarchical-namespace (ADLS Gen2) accounts, listings no
-  longer report directory stubs as objects.
-- Azure: an unconditional `put_object` over an append blob replaces it,
-  instead of misreporting a lost precondition.
-- The Azure snapshot job no longer runs without a schema initializer.
-
-## [0.4.0] - 2026-08-09
-
-First release under the CairnDB name (formerly ChroniQL), repositioned
-as a serverless database engine on blob storage.
-
-### Added
-
-- The `CairnDB` engine facade over five layers: conditional objects;
-  coordination (`claim`, `lease`, `doc`); named commit logs;
-  optimistic multi-key transactions; and declarative SQLite projections
-  with snapshots and time travel.
-- Storage backends: filesystem, Amazon S3, Google Cloud Storage, and
-  Azure Blob Storage.
-- `cairndb` CLI with the `snapshot`, `gc`, and `rebuild` jobs, a jobs
-  container image, and Azure Container Apps Bicep templates.
-
-[Unreleased]: https://github.com/Quadratic-Labs/cairndb/compare/481d105...HEAD
-[0.4.0]: https://github.com/Quadratic-Labs/cairndb/commit/481d105
+[Unreleased]: https://github.com/Quadratic-Labs/cairndb/compare/release/0.4...HEAD
+[0.4.0]: https://github.com/Quadratic-Labs/cairndb/tree/release/0.4
