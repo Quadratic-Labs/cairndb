@@ -1,8 +1,8 @@
 """Layer 1 of the engine: coordination primitives on conditional writes.
 
-Three primitives, extracted from the patterns Flowlet proved on blob-storage
-CAS (its dispatch keys, run-state leases, and hand-rolled read-modify-write
-loops):
+Three primitives covering the patterns serverless workers otherwise
+hand-roll on blob-storage CAS (dispatch keys, run-state leases, and
+read-modify-write loops):
 
 - claim: a unique constraint — put-if-absent where losers converge on the
   winner's value

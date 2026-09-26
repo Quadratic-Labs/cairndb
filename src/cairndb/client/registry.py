@@ -22,7 +22,8 @@ class HandlerRegistry:
     async functions that take a database connection and a SequencedEvent
     (event fields plus its global sequence number).
 
-    Example:
+    Example::
+
         registry = HandlerRegistry()
 
         @registry.handler("user.created")
@@ -48,7 +49,8 @@ class HandlerRegistry:
         Returns:
             Decorator function
 
-        Example:
+        Example::
+
             @registry.handler("user.created")
             async def handle_user_created(db, entry):
                 ...

@@ -14,7 +14,7 @@
     await db.close()
 
 One engine = one bucket (or one prefix of one bucket). See
-docs/ENGINE_API.md for the full design.
+docs/concepts/ for the semantics of each layer.
 """
 
 from collections.abc import Callable

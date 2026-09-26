@@ -1,6 +1,6 @@
 # CairnDB Development Makefile
 
-.PHONY: help install test coverage mutation mutation-results azure-integration lint format type-check clean demo
+.PHONY: help install test coverage mutation mutation-results azure-integration lint format type-check clean demo docs docs-serve
 
 help:
 	@echo "CairnDB Development Commands"
@@ -17,6 +17,10 @@ help:
 	@echo "  make format       Format code with black"
 	@echo "  make type-check   Run mypy type checker"
 	@echo "  make all          Run format, lint, type-check, and test"
+	@echo ""
+	@echo "Documentation:"
+	@echo "  make docs         Build the HTML docs into docs/_build/html (warnings fail)"
+	@echo "  make docs-serve   Serve the docs with live reload on http://127.0.0.1:8000"
 	@echo ""
 	@echo "Running:"
 	@echo "  make demo         Run the committer + reader demo (no server)"
@@ -67,7 +71,7 @@ clean:
 	find . -type f -name "*.pyc" -delete
 	find . -type f -name "*.pyo" -delete
 	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
-	rm -rf build/ dist/ .coverage htmlcov/ .pytest_cache/ .mypy_cache/
+	rm -rf build/ dist/ .coverage htmlcov/ .pytest_cache/ .mypy_cache/ docs/_build/
 
 demo:
 	CAIRNDB_STORAGE_TYPE=filesystem \
@@ -75,6 +79,12 @@ demo:
 	CAIRNDB_DB_PATH=./demo-projection.db \
 	CAIRNDB_POLL_INTERVAL=1 \
 	python -m cairndb.client.run
+
+docs:
+	sphinx-build -W --keep-going -b html docs docs/_build/html
+
+docs-serve:
+	sphinx-autobuild docs docs/_build/html --watch src
 
 all: format lint type-check test
 	@echo ""

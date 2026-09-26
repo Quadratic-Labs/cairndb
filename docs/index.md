@@ -1,102 +1,136 @@
 # CairnDB
 
-CairnDB is a serverless database engine on blob storage.
-There are no long-running servers: the storage bucket is the arbiter.
-CairnDB is for low and medium workloads that accept higher latency.
-In return, CairnDB costs very little to operate.
+**A serverless database engine on blob storage — the bucket is the only server.**
 
-<!-- Before TOC, provide quick links to strategic parts: usecases, quickstart, ... -->
+A cairn is a stack of stones raised one by one, by many independent hands,
+with no custodian — and it stands for centuries. CairnDB works the same
+way: all state lives in an object-storage bucket, every writer is just a
+library call, and the bucket itself arbitrates concurrency through
+conditional writes. No database server, no coordinator, no idle compute.
 
----
+```python
+from cairndb import CairnDB
 
-<!-- TODO : TOC -->
+db = CairnDB.configure({"storage": {"type": "s3", "bucket": "myapp"}})
 
----
+await db.objects.put("config/app.json", data)                   # conditional KV
+result = await db.claim("dispatch/etl:2026-08-10", {"run": 1})  # exactly-one winner
+lease  = await db.lease("state/run-1", ttl=120)                 # fenced ownership
+seq    = await db.log("orders").append(event)                   # durable, ordered
+async with db.transact() as tx:                                 # multi-key atomicity
+    tx.put("accounts/alice", alice_bytes)
+    tx.put("accounts/bob", bob_bytes)
+proj   = db.projection("orders_view", log="orders")             # SQL over the log
+```
 
-<!-- This should really be the end of the document -->
+## What you get
 
-This document is the overview of CairnDB. It describes the storage
-substrate and its invariants: the commit log, snapshots, projections, and
-the conditional object store. It also summarizes the engine layers built on
-that substrate: coordination, named logs, transactions, and declarative
-projections. The `CairnDB` facade exposes those layers, and
-[ENGINE_API.md](ENGINE_API.md) specifies them in full. Every engine
-operation reduces to the two write primitives defined here: put-if-absent
-and compare-and-swap (CAS).
-
----
-
-## Non-Goals
-
-CairnDB explicitly does **not** aim to be:
-
-- a high-throughput database
-- a low-latency replication engine
-- a general-purpose event bus
-- a multi-region active-active system
----
-
-A database engine decomposes into a WAL, a concurrency-control layer,
-derived state, and vacuum. CairnDB exposes each as a client-library
-primitive:
-
-| Layer | Primitive | Engine analogy |
+| Layer | You get | Engine analogy |
 |---|---|---|
-| 0 | Conditional objects (`objects`) | atomic page writes |
-| 1 | Coordination (`claim`, `lease`, `doc`) | unique constraints, row locks, RMW |
-| 2 | Logs (`log`, `transact`) | WAL, transaction coordinator |
-| 3 | Projections (`projection`) | indexes / materialized views |
-| 4 | Lifecycle & watch (`wait_for`, `tail`, jobs) | vacuum, change feeds |
+| [Objects](concepts/objects.md) | etag-guarded key-value documents (CAS, put-if-absent) | atomic page writes |
+| [Coordination](concepts/coordination.md) | `claim` (unique constraint), `lease` (fenced ownership), `doc` (retrying read-modify-write) | locks & constraints |
+| [Logs](concepts/logs.md) | named, append-only commit logs — dense, totally ordered, durable on ack | write-ahead log |
+| [Transactions](concepts/transactions.md) | optimistic multi-key atomicity, coordinated by a system log | transaction manager |
+| [Projections](concepts/projections.md) | deterministic replay into local read-only SQLite, snapshots, time travel | indexes & materialized views |
 
----
+## When to use it
 
-## Core Principles
+CairnDB fits **low-to-medium write workloads that tolerate latency** in
+exchange for near-zero operating cost:
 
-These principles are invariants. Implementations must not violate them.
+- Small to medium datasets (up to ~10 GB per projection) with rich read
+  queries and modest write volume.
+- Strong auditability and determinism requirements: event sourcing,
+  time-travel reads, rebuild-anywhere recovery.
+- Coordination state for serverless and scale-to-zero systems: workflow
+  ownership, exactly-once dispatch, checkpoints.
+- "I want a database, but I refuse to run or rent a database server."
 
-1. **Append-only source of truth**
-   - All writes are immutable commit objects in the log.
-   - In-place mutation of data never occurs.
+It is **not** a high-throughput OLTP database, a low-latency replication
+engine, a general-purpose event bus, or a multi-region active-active
+system. See [Guarantees and limits](concepts/consistency.md).
 
-2. **Dense sequence per log, enforced by the bucket**
-   - Within a log, commits are numbered densely (1, 2, 3, …), with no gaps.
-   - Ordering is total and authoritative. Conditional (put-if-absent)
-     writes arbitrate it — never a process, a lease, or a clock.
-   - Many named logs can exist, each with its own sequence. Ordering is
-     defined only within a log. Sharding across logs is the scaling
-     mechanism.
+## Where to go next
 
-3. **Blob storage is the ledger**
-   - Commit objects and snapshots are stored in blob/object storage.
-   - Blob storage is the ultimate source of truth.
+- **New to CairnDB?** [Install](getting-started/installation.md) it, then
+  follow the [Quickstart](getting-started/quickstart.md) — ten minutes,
+  no cloud account needed.
+- **Understand the model** — [Concepts](concepts/index.md) explains how a
+  bucket can be a database, layer by layer.
+- **Solve a problem** — [Guides](guides/index.md) collect recipes for
+  coordination, operations, and the lower-level API.
+- **Ship it** — [Deployment](deployment/index.md) covers local setups and
+  AWS, Google Cloud, and Azure.
+- **Look something up** — the [Reference](reference/index.md) is generated
+  from the source docstrings.
 
-4. **Durable ack**
-   - A write is acknowledged only after its commit object is durably
-     stored.
-   - There is no window in which an acknowledged write can be lost.
+```{toctree}
+:hidden:
+:caption: Getting started
 
-5. **SQLite is a projection, not the truth**
-   - SQLite databases are *derived*, read-only views.
-   - They can always be rebuilt from snapshots plus the commit log.
+getting-started/installation
+getting-started/quickstart
+```
 
-6. **Deterministic replay**
-   - Replay of the same commits always produces the same SQLite state.
-   - Projection logic must be idempotent and versioned.
+```{toctree}
+:hidden:
+:caption: Concepts
 
-7. **Eventual consistency**
-   - Clients are eventually consistent with the ledger (polling).
-   - Read-your-writes is available per session, via `wait_for_sequence`.
+concepts/index
+concepts/storage-model
+concepts/objects
+concepts/coordination
+concepts/logs
+concepts/transactions
+concepts/projections
+concepts/consistency
+```
 
----
+```{toctree}
+:hidden:
+:caption: Guides
 
-## Schema & Versioning
+guides/index
+guides/coordination-patterns
+guides/lower-level-api
+guides/operations
+guides/troubleshooting
+```
 
-Two layers are versioned independently:
+```{toctree}
+:hidden:
+:caption: Deployment
 
-1. **Event schema version** — the structure of events. It is recorded per
-   commit. Handlers use it to interpret payloads.
-2. **Projection schema version** — the SQLite tables and indices. It is
-   encoded in the snapshot prefix (`snapshots/v2/…`). After a version bump,
-   new snapshots are built under the new prefix, by replay of the same log.
-   Old and new versions can coexist during migration.
+deployment/index
+deployment/local
+deployment/aws
+deployment/gcp
+deployment/azure
+```
 
+```{toctree}
+:hidden:
+:caption: Reference
+
+reference/index
+reference/configuration
+reference/cli
+reference/api/engine
+reference/api/events
+reference/api/writer
+reference/api/storage
+reference/api/client
+reference/api/jobs
+reference/api/exceptions
+glossary
+```
+
+```{toctree}
+:hidden:
+:caption: Project
+
+project/roadmap
+project/changelog
+project/contributing
+project/code-of-conduct
+```

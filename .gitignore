@@ -56,3 +56,6 @@ Thumbs.db
 
 # Mutation testing (mutmut)
 mutants/
+
+# Documentation build
+docs/_build/
