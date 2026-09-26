@@ -8,6 +8,22 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before
 
 ## [Unreleased]
 
+### Added
+
+- `LICENSE` file with the MIT license text, shipped in the sdist and
+  wheel.
+- `py.typed` marker (PEP 561), so type checkers use CairnDB's inline
+  type hints.
+- Publishing: pushing a `vX.Y.Z` tag publishes the release to PyPI
+  (Trusted Publishing) and creates the GitHub Release.
+
+### Changed
+
+- Package metadata declares the license as an SPDX expression
+  (`license = "MIT"`, PEP 639) instead of the deprecated table and
+  classifier.
+- README links are absolute, so they work on the PyPI project page.
+
 ## [0.4.0] - 2026-09-26
 
 First public release. CairnDB (formerly ChroniQL) is a serverless
