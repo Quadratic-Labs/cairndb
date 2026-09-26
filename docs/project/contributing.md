@@ -108,6 +108,27 @@ make docs-serve    # live-reloading server on http://127.0.0.1:8000
   sync with the snippets above it.
 - New pages must be added to a `toctree` in `docs/index.md`.
 
+### Publishing
+
+The site at <https://quadratic-labs.github.io/cairndb/> is published by
+the `Docs` GitHub Actions workflow (`.github/workflows/docs.yml`):
+
+- **Pull requests** to `main` or a release branch build the docs as a
+  check. Warnings fail the build. Nothing is published.
+- **Pushes to a `release/X.Y` branch** build the docs, and publish them
+  only if that branch is the **latest** release branch, meaning the
+  highest `X.Y` on GitHub. Pushes to older release branches, such as
+  backports, never overwrite the published site.
+- To republish without a new commit, run the workflow manually on the
+  latest release branch from the Actions tab.
+
+Cutting a release therefore publishes its docs:
+
+```bash
+git switch -c release/0.5 main
+git push -u origin release/0.5
+```
+
 ## Release
 
 ```bash

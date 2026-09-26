@@ -33,7 +33,8 @@ async with db.transact() as tx:                                 # multi-key atom
 proj   = db.projection("orders_view", log="orders")             # SQL over the log
 ```
 
-The documentation lives in [docs/](docs/index.md): start with the
+The documentation is published at **<https://quadratic-labs.github.io/cairndb/>**
+(sources in [docs/](docs/index.md)): start with the
 [quickstart](docs/getting-started/quickstart.md), and see the
 [concepts](docs/concepts/index.md) for the semantics of each layer.
 
