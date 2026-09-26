@@ -1,10 +1,11 @@
 """CairnDB CLI: snapshot building, garbage collection, projection rebuild.
 
 Storage is configured via CAIRNDB_* environment variables (see
-StorageConfig.from_env). Application code (handlers, schema initializer)
-is loaded from "module:attribute" references, e.g.::
+StorageConfig.from_env). Every command acts on one log: the root log, or
+the named log given by --log (or CAIRNDB_LOG). Application code (handlers,
+schema initializer) is loaded from "module:attribute" references, e.g.::
 
-    cairndb snapshot --handlers myapp.projections:registry \\
+    cairndb snapshot --log orders --handlers myapp.projections:registry \\
                       --init-schema myapp.projections:init_schema
 
 Designed to run as scheduled serverless jobs (container entrypoint).
@@ -13,6 +14,7 @@ Designed to run as scheduled serverless jobs (container entrypoint).
 import asyncio
 import importlib
 import sys
+from typing import Any
 
 try:
     import typer
@@ -22,6 +24,8 @@ except ImportError:
 
 import structlog
 
+from cairndb.engine.logs import log_storage
+from cairndb.storage.base import DEFAULT_SCHEMA_VERSION, BlobStorage
 from cairndb.storage.config import StorageConfig
 
 structlog.configure(
@@ -55,6 +59,24 @@ def _load_ref(ref: str):
         raise typer.BadParameter(f"{module_path!r} has no attribute {attribute!r}")
 
 
+def _log_option() -> Any:
+    """A fresh --log option (Typer OptionInfo) for one command."""
+    return typer.Option(
+        None,
+        "--log",
+        envvar="CAIRNDB_LOG",
+        help="Named log to operate on (logs/{name}/); the root log when omitted",
+    )
+
+
+def _storage_for(base: BlobStorage, log: str | None) -> BlobStorage:
+    """The storage view of `log`, rejecting invalid log names as bad input."""
+    try:
+        return log_storage(base, log)
+    except ValueError as e:
+        raise typer.BadParameter(str(e), param_hint="--log") from None
+
+
 @app.command()
 def snapshot(
     handlers: str = typer.Option(
@@ -66,11 +88,12 @@ def snapshot(
         help="Schema initializer reference (async callable taking a db path)",
     ),
     schema_version: str = typer.Option(
-        "1.0.0", help="Projection schema version (snapshots/v{version}/ prefix)"
+        DEFAULT_SCHEMA_VERSION,
+        help="Projection schema version (snapshots/v{version}/ prefix); "
+        "must equal the projection's version",
     ),
-    end_at: int | None = typer.Option(
-        None, help="Last commit to include (point-in-time snapshot)"
-    ),
+    end_at: int | None = typer.Option(None, help="Last commit to include (point-in-time snapshot)"),
+    log: str | None = _log_option(),
 ) -> None:
     """Build a snapshot by replaying the commit log, and upload it."""
     from cairndb.jobs.snapshot import SnapshotBuilder
@@ -78,18 +101,19 @@ def snapshot(
     registry = _load_ref(handlers)
     initializer = _load_ref(init_schema) if init_schema else None
 
-    storage = StorageConfig.from_env().create_storage()
+    storage = _storage_for(StorageConfig.from_env().create_storage(), log)
     builder = SnapshotBuilder(
         storage, registry, init_schema=initializer, schema_version=schema_version
     )
 
     commit = asyncio.run(builder.build(end_at=end_at))
-    typer.echo(f"Snapshot built through commit {commit} (schema v{schema_version})")
+    where = f"log {log!r}" if log else "root log"
+    typer.echo(f"Snapshot built through commit {commit} ({where}, schema v{schema_version})")
 
 
 @app.command()
 def gc(
-    schema_version: str = typer.Option("1.0.0", help="Projection schema version"),
+    schema_version: str = typer.Option(DEFAULT_SCHEMA_VERSION, help="Projection schema version"),
     keep_snapshots: int = typer.Option(3, min=1, help="Snapshots to keep"),
     prune_log: bool = typer.Option(
         False,
@@ -97,11 +121,12 @@ def gc(
         help="Also delete commits covered by the oldest kept snapshot "
         "(destroys replayable history before it!)",
     ),
+    log: str | None = _log_option(),
 ) -> None:
     """Apply retention policy to snapshots (and optionally the log)."""
     from cairndb.jobs.gc import collect_garbage
 
-    storage = StorageConfig.from_env().create_storage()
+    storage = _storage_for(StorageConfig.from_env().create_storage(), log)
 
     result = asyncio.run(
         collect_garbage(
@@ -124,9 +149,8 @@ def rebuild(
         ...,
         help="HandlerRegistry reference, e.g. 'myapp.projections:registry'",
     ),
-    init_schema: str | None = typer.Option(
-        None, help="Schema initializer reference"
-    ),
+    init_schema: str | None = typer.Option(None, help="Schema initializer reference"),
+    log: str | None = _log_option(),
 ) -> None:
     """Rebuild the local projection from the ledger (debug/ops).
 
@@ -139,7 +163,7 @@ def rebuild(
     initializer = _load_ref(init_schema) if init_schema else None
 
     config = ClientConfig.from_env()
-    storage = config.create_storage()
+    storage = _storage_for(config.create_storage(), log)
     projector = Projector(config, storage, registry, init_schema=initializer)
 
     last = asyncio.run(projector.rebuild_from_scratch())

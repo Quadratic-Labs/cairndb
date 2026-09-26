@@ -10,8 +10,20 @@ param imageTag string = 'latest'
 @description('Blob container name for the commit log and snapshots')
 param blobContainerName string = 'cairndb-data'
 
-@description('Handler registry reference for snapshot builds (module:attribute)')
-param snapshotHandlersRef string = 'cairndb.client.demo_handlers:registry'
+@description('''Logs to snapshot and garbage-collect, one entry each:
+- log: '' for the root log, else a named log (letters, digits and '-' only: it names the jobs)
+- handlers: HandlerRegistry reference (module:attribute)
+- initSchema: schema initializer reference (module:attribute), creating the projection tables''')
+param snapshotLogs array = [
+  {
+    log: ''
+    handlers: 'cairndb.client.demo_handlers:registry'
+    initSchema: 'cairndb.client.demo_handlers:init_schema'
+  }
+]
+
+@description('Projection schema version (snapshots/v{version}/); must equal the version your projections declare')
+param schemaVersion string = '1'
 
 @description('Cron schedule for the snapshot job (UTC)')
 param snapshotCron string = '0 3 * * *'
@@ -24,7 +36,8 @@ param gcKeepSnapshots int = 3
 
 // There are no long-running services in CairnDB v2: writers and readers
 // are libraries embedded in application processes, talking only to blob
-// storage. The only compute deployed here is two scheduled jobs.
+// storage. The only compute deployed here is scheduled jobs: one snapshot
+// job and one GC job per entry of snapshotLogs.
 
 // ---------- Managed Identity ----------
 
@@ -81,20 +94,27 @@ module appEnv 'modules/container-apps-env.bicep' = {
   }
 }
 
-// ---------- Snapshot Job (scheduled) ----------
+// ---------- Snapshot + GC jobs (scheduled), one pair per log ----------
 
-module snapshotJob 'modules/container-app-job.bicep' = {
-  name: 'snapshot-job'
+module snapshotJobs 'modules/container-app-job.bicep' = [for entry in snapshotLogs: {
+  name: empty(entry.log) ? 'snapshot-job' : 'snapshot-job-${entry.log}'
   params: {
     location: location
     baseName: baseName
-    jobName: 'snapshot'
+    jobName: empty(entry.log) ? 'snapshot' : 'snapshot-${entry.log}'
     cronExpression: snapshotCron
-    args: [
+    args: concat([
       'snapshot'
       '--handlers'
-      snapshotHandlersRef
-    ]
+      entry.handlers
+      '--init-schema'
+      entry.initSchema
+      '--schema-version'
+      schemaVersion
+    ], empty(entry.log) ? [] : [
+      '--log'
+      entry.log
+    ])
     environmentId: appEnv.outputs.environmentId
     acrLoginServer: acr.outputs.acrLoginServer
     imageTag: imageTag
@@ -103,22 +123,25 @@ module snapshotJob 'modules/container-app-job.bicep' = {
     storageConnectionStringSecretUri: keyVault.outputs.secretUri
     blobContainerName: blobContainerName
   }
-}
+}]
 
-// ---------- GC Job (scheduled) ----------
-
-module gcJob 'modules/container-app-job.bicep' = {
-  name: 'gc-job'
+module gcJobs 'modules/container-app-job.bicep' = [for entry in snapshotLogs: {
+  name: empty(entry.log) ? 'gc-job' : 'gc-job-${entry.log}'
   params: {
     location: location
     baseName: baseName
-    jobName: 'gc'
+    jobName: empty(entry.log) ? 'gc' : 'gc-${entry.log}'
     cronExpression: gcCron
-    args: [
+    args: concat([
       'gc'
       '--keep-snapshots'
       string(gcKeepSnapshots)
-    ]
+      '--schema-version'
+      schemaVersion
+    ], empty(entry.log) ? [] : [
+      '--log'
+      entry.log
+    ])
     environmentId: appEnv.outputs.environmentId
     acrLoginServer: acr.outputs.acrLoginServer
     imageTag: imageTag
@@ -127,7 +150,7 @@ module gcJob 'modules/container-app-job.bicep' = {
     storageConnectionStringSecretUri: keyVault.outputs.secretUri
     blobContainerName: blobContainerName
   }
-}
+}]
 
 // ---------- Outputs ----------
 

@@ -6,6 +6,7 @@ from cairndb.client.projector import Projector
 from cairndb.core.exceptions import ReplayError
 from cairndb.jobs.gc import collect_garbage
 from cairndb.jobs.snapshot import SnapshotBuilder
+from cairndb.storage.base import DEFAULT_SCHEMA_VERSION
 from tests.conftest import (
     commit_events,
     init_users_projection,
@@ -25,7 +26,7 @@ class TestSnapshotBuilder:
         commit = await builder.build()
 
         assert commit == 2
-        assert await storage.find_latest_snapshot("1.0.0") == 2
+        assert await storage.find_latest_snapshot(DEFAULT_SCHEMA_VERSION) == 2
 
     async def test_snapshot_bootstraps_a_fresh_client(
         self, storage, user_registry, client_config
@@ -76,32 +77,32 @@ class TestSnapshotBuilder:
 
 class TestGarbageCollection:
     async def _snapshot_at(self, storage, number: int) -> None:
-        await storage.put_snapshot("1.0.0", number, f"snap-{number}".encode())
+        await storage.put_snapshot(DEFAULT_SCHEMA_VERSION, number, f"snap-{number}".encode())
 
     async def test_keeps_newest_snapshots(self, storage):
         for n in [10, 20, 30, 40]:
             await self._snapshot_at(storage, n)
 
-        result = await collect_garbage(storage, "1.0.0", keep_snapshots=2)
+        result = await collect_garbage(storage, DEFAULT_SCHEMA_VERSION, keep_snapshots=2)
 
         assert result.snapshots_deleted == 2
         assert result.oldest_kept_snapshot == 30
-        assert await storage.list_snapshots("1.0.0") == [30, 40]
+        assert await storage.list_snapshots(DEFAULT_SCHEMA_VERSION) == [30, 40]
 
     async def test_no_deletion_when_under_limit(self, storage):
         await self._snapshot_at(storage, 10)
 
-        result = await collect_garbage(storage, "1.0.0", keep_snapshots=3)
+        result = await collect_garbage(storage, DEFAULT_SCHEMA_VERSION, keep_snapshots=3)
 
         assert result.snapshots_deleted == 0
-        assert await storage.list_snapshots("1.0.0") == [10]
+        assert await storage.list_snapshots(DEFAULT_SCHEMA_VERSION) == [10]
 
     async def test_log_untouched_without_prune_flag(self, storage, user_registry):
         for i in range(1, 4):
             await commit_events(storage, user_created(i, f"u{i}"))
         await self._snapshot_at(storage, 3)
 
-        result = await collect_garbage(storage, "1.0.0", keep_snapshots=1)
+        result = await collect_garbage(storage, DEFAULT_SCHEMA_VERSION, keep_snapshots=1)
 
         assert result.commits_deleted == 0
         assert await storage.list_commits() == [1, 2, 3]
@@ -113,7 +114,7 @@ class TestGarbageCollection:
         await self._snapshot_at(storage, 3)
 
         result = await collect_garbage(
-            storage, "1.0.0", keep_snapshots=1, prune_log=True
+            storage, DEFAULT_SCHEMA_VERSION, keep_snapshots=1, prune_log=True
         )
 
         # Snapshot 2 deleted; snapshot 3 kept; commits 1..3 covered by it
@@ -134,7 +135,7 @@ class TestGarbageCollection:
         await builder.build()  # snapshot at 3
         await commit_events(storage, user_created(4, "Dave"))  # commit 4
 
-        await collect_garbage(storage, "1.0.0", keep_snapshots=1, prune_log=True)
+        await collect_garbage(storage, DEFAULT_SCHEMA_VERSION, keep_snapshots=1, prune_log=True)
         assert await storage.list_commits() == [4]
 
         projector = Projector(client_config, storage, user_registry)

@@ -67,7 +67,8 @@ class StorageConfig:
             CAIRNDB_STORAGE_TYPE            - filesystem | s3 | azure | gcs
             CAIRNDB_STORAGE_PATH            - filesystem root path
             CAIRNDB_STORAGE_PREFIX          - Blob key prefix
-            CAIRNDB_S3_BUCKET               - S3/GCS bucket
+            CAIRNDB_S3_BUCKET               - S3 bucket
+            CAIRNDB_GCS_BUCKET              - GCS bucket (else CAIRNDB_S3_BUCKET)
             CAIRNDB_S3_REGION               - AWS region
             CAIRNDB_S3_ENDPOINT_URL         - Custom S3 endpoint
             CAIRNDB_AZURE_CONTAINER         - Azure container name
@@ -98,7 +99,9 @@ class StorageConfig:
             )
         if storage_type == "gcs":
             return GCSStorageConfig(
-                bucket=env.get("CAIRNDB_S3_BUCKET", ""),
+                # CAIRNDB_S3_BUCKET was the only bucket variable before
+                # CAIRNDB_GCS_BUCKET existed; still honoured for existing jobs.
+                bucket=env.get("CAIRNDB_GCS_BUCKET") or env.get("CAIRNDB_S3_BUCKET", ""),
                 prefix=prefix,
                 project=env.get("CAIRNDB_GCS_PROJECT"),
                 credentials_path=env.get("CAIRNDB_GCS_CREDENTIALS_PATH"),

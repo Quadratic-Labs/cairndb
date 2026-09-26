@@ -9,6 +9,7 @@ import pytest
 
 from cairndb.jobs.gc import collect_garbage
 from cairndb.jobs.snapshot import SnapshotBuilder
+from cairndb.storage.base import DEFAULT_SCHEMA_VERSION
 from tests.conftest import commit_events, init_users_projection, make_user_registry, user_created
 
 
@@ -65,7 +66,7 @@ class TestSnapshotBuilder:
         commit = await builder.build()
         assert commit == 1
         assert seen == {"prefix": "cairndb-snapshot-"}
-        assert await storage.get_snapshot("1.0.0", 1)
+        assert await storage.get_snapshot(DEFAULT_SCHEMA_VERSION, 1)
 
     async def test_cleanup_failure_never_masks_the_real_error(self, storage):
         left = {}

@@ -27,7 +27,7 @@ from cairndb.client.registry import EventHandler, HandlerRegistry
 from cairndb.client.replay import ReplayEngine
 from cairndb.client.updater import BackgroundUpdater
 from cairndb.core.types import SequenceNumber
-from cairndb.storage.base import BlobStorage
+from cairndb.storage.base import DEFAULT_SCHEMA_VERSION, BlobStorage
 
 logger = structlog.get_logger(__name__)
 
@@ -42,10 +42,11 @@ class Projection:
         storage: BlobStorage,
         name: str,
         *,
-        version: str = "1",
+        version: str = DEFAULT_SCHEMA_VERSION,
         db_path: str | None = None,
         poll_interval: float = 5.0,
         init_schema: SchemaInitializer | None = None,
+        registry: HandlerRegistry | None = None,
     ):
         """
         Args:
@@ -58,10 +59,14 @@ class Projection:
             poll_interval: Background poll interval in seconds
             init_schema: Optional async callback creating application
                 tables on a fresh, empty projection
+            registry: Handlers to replay with, e.g. the module-level
+                registry the snapshot job also loads, so the app and the
+                job cannot drift apart. Handlers added with :meth:`on`
+                register into it. Default: a fresh, empty registry.
         """
         self.storage = storage
         self.name = name
-        self.registry = HandlerRegistry()
+        self._registry = registry if registry is not None else HandlerRegistry()
         self.config = ClientConfig(
             db_path=db_path or f"./{name}.v{version}.sqlite",
             schema_version=version,
@@ -69,10 +74,20 @@ class Projection:
         )
         self._init_schema = init_schema
         self._updater = BackgroundUpdater(
-            self.config, storage, self.registry, init_schema=init_schema
+            self.config, storage, self._registry, init_schema=init_schema
         )
 
     # -- handler registration ------------------------------------------------
+
+    @property
+    def registry(self) -> HandlerRegistry:
+        """The handlers this projection replays with.
+
+        Read-only: replay is wired to this registry at construction, so
+        a replacement could never take effect. Pass ``registry=`` to the
+        constructor instead.
+        """
+        return self._registry
 
     def on(self, event_type: str) -> Callable[[EventHandler], EventHandler]:
         """Decorator registering the handler for `event_type`.
@@ -81,7 +96,7 @@ class Projection:
         aiosqlite connection and a SequencedEvent; one SQLite transaction
         wraps each commit.
         """
-        return self.registry.handler(event_type)
+        return self._registry.handler(event_type)
 
     # -- refresh / background updates ----------------------------------------
 
@@ -138,7 +153,7 @@ class Projection:
         dest = dest_path or f"{self.path}.asof-{commit:012d}"
         Path(dest).unlink(missing_ok=True)
 
-        replay_engine = ReplayEngine(self.storage, self.registry)
+        replay_engine = ReplayEngine(self.storage, self._registry)
 
         snapshots = await self.storage.list_snapshots(self.config.schema_version)
         base = max((n for n in snapshots if n <= commit), default=None)

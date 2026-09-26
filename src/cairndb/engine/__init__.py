@@ -10,7 +10,7 @@ See docs/ENGINE_API.md for the design. Layers:
 
 from cairndb.engine.coordination import ClaimResult, Document, Lease
 from cairndb.engine.core import CairnDB
-from cairndb.engine.logs import Log, NamespacedStorage
+from cairndb.engine.logs import Log, NamespacedStorage, log_storage
 from cairndb.engine.objects import Objects
 from cairndb.engine.projection import Projection
 from cairndb.engine.transactions import Transaction, TransactionManager
@@ -26,4 +26,5 @@ __all__ = [
     "Projection",
     "Transaction",
     "TransactionManager",
+    "log_storage",
 ]

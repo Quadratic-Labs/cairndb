@@ -17,7 +17,7 @@ from cairndb.client.projector import SchemaInitializer
 from cairndb.client.registry import HandlerRegistry
 from cairndb.client.replay import ReplayEngine
 from cairndb.core.exceptions import ReplayError
-from cairndb.storage.base import BlobStorage
+from cairndb.storage.base import DEFAULT_SCHEMA_VERSION, BlobStorage
 
 logger = structlog.get_logger(__name__)
 
@@ -41,7 +41,7 @@ class SnapshotBuilder:
         storage: BlobStorage,
         registry: HandlerRegistry,
         init_schema: SchemaInitializer | None = None,
-        schema_version: str = "1.0.0",
+        schema_version: str = DEFAULT_SCHEMA_VERSION,
     ):
         """
         Initialize the snapshot builder.

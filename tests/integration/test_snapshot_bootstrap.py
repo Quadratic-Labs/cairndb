@@ -10,6 +10,7 @@ client bootstraps from the snapshot *as its base*, then replays the tail.
 from cairndb.client.projector import Projector
 from cairndb.client.replay import ReplayEngine
 from cairndb.core.types import SequenceNumber
+from cairndb.storage.base import DEFAULT_SCHEMA_VERSION
 from tests.conftest import (
     commit_events,
     init_users_projection,
@@ -18,7 +19,7 @@ from tests.conftest import (
 )
 
 
-async def build_snapshot(storage, registry, temp_dir, schema: str = "1.0.0") -> int:
+async def build_snapshot(storage, registry, temp_dir, schema: str = DEFAULT_SCHEMA_VERSION) -> int:
     """Replay the whole log into a snapshot and upload it. Returns its number."""
     snap_path = str(temp_dir / "snapshot-build.db")
     await init_users_projection(snap_path)

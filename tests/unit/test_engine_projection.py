@@ -140,9 +140,7 @@ async def test_as_of_bootstraps_from_snapshot(db, temp_dir, storage):
     # Publish the state at commit 1 as a snapshot, then GC the log head:
     # from here on, only a snapshot bootstrap can reach either target.
     at_one = await proj.as_of(commit=seq1.commit, dest_path=str(temp_dir / "snap-src.sqlite"))
-    await storage.put_snapshot(
-        proj.config.schema_version, seq1.commit, Path(at_one).read_bytes()
-    )
+    await storage.put_snapshot(proj.config.schema_version, seq1.commit, Path(at_one).read_bytes())
     await storage.delete_commits_before(seq2.commit)
 
     dest = await proj.as_of(commit=seq2.commit, dest_path=str(temp_dir / "asof2.sqlite"))
@@ -156,3 +154,31 @@ async def test_as_of_bootstraps_from_snapshot(db, temp_dir, storage):
         rows = conn.execute("SELECT id, name FROM users").fetchall()
     assert rows == [(1, "ada")]
     await db.close()
+
+
+async def test_projection_replays_with_a_given_registry(db, temp_dir):
+    """The app and the snapshot job can share one module-level registry."""
+    from tests.conftest import make_user_registry
+
+    shared = make_user_registry()
+    proj = db.projection(
+        "shared",
+        db_path=str(temp_dir / "shared.sqlite"),
+        init_schema=init_users,
+        registry=shared,
+    )
+    assert proj.registry is shared
+
+    await db.log().append(make_event("user.created", {"id": 1, "name": "ada"}))
+    await proj.refresh()
+    with proj.connect() as conn:
+        assert conn.execute("SELECT id, name FROM users").fetchall() == [(1, "ada")]
+    await db.close()
+
+
+async def test_projection_registry_cannot_be_replaced(storage):
+    # Replay is wired to the registry at construction: a silently ignored
+    # reassignment would be worse than an error.
+    proj = Projection(storage, "p")
+    with pytest.raises(AttributeError):
+        proj.registry = None
