@@ -122,17 +122,75 @@ the `Docs` GitHub Actions workflow (`.github/workflows/docs.yml`):
 - To republish without a new commit, run the workflow manually on the
   latest release branch from the Actions tab.
 
-Cutting a release therefore publishes its docs:
+Cutting a release branch therefore publishes its docs. See
+[Releasing](#releasing).
+
+## Releasing
+
+Releases combine two kinds of Git refs:
+
+- **Release branches** (`release/X.Y`) are lines of maintenance. Patch
+  fixes land on them, and the docs are published from the head of the
+  latest one.
+- **Tags** (`vX.Y.Z`) mark the exact commit of each release, forever.
+  GitHub Releases, `pip install git+…@vX.Y.Z`, and the changelog's
+  version links point at tags.
+
+Both are protected by repository rulesets. Only the release manager can
+create or push release branches, and create release tags. Nobody can
+move or delete a tag, and nobody can delete a release branch or
+force-push to it. Commits on release branches must be signed.
+
+### A new minor release (X.Y.0)
+
+1. On `main`, set the version in `pyproject.toml` and
+   `src/cairndb/__init__.py`. In `CHANGELOG.md`, move the
+   `[Unreleased]` entries under a new `## [X.Y.0] - YYYY-MM-DD` heading,
+   and add its link at the bottom:
+   `[X.Y.0]: https://github.com/Quadratic-Labs/cairndb/releases/tag/vX.Y.0`.
+   Point `[Unreleased]` at `compare/vX.Y.0...HEAD`. Merge this through a
+   pull request.
+2. Cut the release branch from `main`. Pushing it publishes the docs:
+
+   ```bash
+   git switch main && git pull --ff-only
+   git switch -c release/X.Y
+   git push -u origin release/X.Y
+   ```
+
+3. Tag the release with a signed tag, then push the tag:
+
+   ```bash
+   git tag -s vX.Y.0 -m "CairnDB X.Y.0"
+   git push origin vX.Y.0
+   ```
+
+4. Create the GitHub Release, using the changelog section as notes:
+
+   ```bash
+   V=X.Y.0
+   awk -v v="$V" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f && !/^\[[^]]*\]: /' \
+     CHANGELOG.md > /tmp/notes.md
+   gh release create "v$V" --title "CairnDB $V" --notes-file /tmp/notes.md
+   ```
+
+### A patch release (X.Y.Z)
+
+1. Land the fix on `main` first when it applies there, then cherry-pick
+   it onto `release/X.Y`. A fix that only concerns the old line goes
+   straight to the release branch.
+2. On `release/X.Y`, bump the version to X.Y.Z, add the changelog entry
+   and its link, commit, and push. The docs republish if this is still
+   the latest release branch.
+3. Tag `vX.Y.Z` on the release branch, push the tag, and create the
+   GitHub Release as above.
+4. Bring the changelog entry back to `main`, so `main`'s changelog lists
+   every release.
+
+### Artifacts
 
 ```bash
-git switch -c release/0.4 main
-git push -u origin release/0.4
-```
-
-## Release
-
-```bash
-python -m build
+python -m build                  # sdist and wheel, into dist/
 docker build -t cairndb-jobs .   # jobs image (cairndb CLI entrypoint)
 ```
 

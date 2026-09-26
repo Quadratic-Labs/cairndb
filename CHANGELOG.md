@@ -54,5 +54,5 @@ bucket's conditional writes arbitrate concurrency.
   opt-in live Azure suite, and mutation testing (the codebase is
   mutant-clean).
 
-[Unreleased]: https://github.com/Quadratic-Labs/cairndb/compare/release/0.4...HEAD
-[0.4.0]: https://github.com/Quadratic-Labs/cairndb/tree/release/0.4
+[Unreleased]: https://github.com/Quadratic-Labs/cairndb/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Quadratic-Labs/cairndb/releases/tag/v0.4.0
