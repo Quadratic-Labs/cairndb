@@ -112,6 +112,21 @@ class CairnDB:
             steal_if_expired=steal_if_expired, state_fn=state_fn,
         )
 
+    async def attach_lease(self, key: str, *, holder: str, ttl: float) -> Lease | None:
+        """Re-attach to the lease on `key` that `holder` owns now, or None.
+
+        Reads the lease document and rebuilds the holder's handle: same
+        epoch, same deadline, nothing written. None when the lease is
+        absent, released, held by someone else, or expired — an expired
+        lease is resumed with :meth:`lease`, which takes a fresh epoch.
+        The holder string is a credential: whoever knows it can write.
+        """
+        return await coordination.attach(self.storage, key, holder=holder, ttl=ttl)
+
+    def attach_lease_sync(self, key: str, *, holder: str, ttl: float) -> Lease | None:
+        """Sync twin of :meth:`attach_lease`."""
+        return coordination.attach_sync(self.storage, key, holder=holder, ttl=ttl)
+
     async def cooperative_write(
         self, key: str, state_fn: Callable[[Any], Any]
     ) -> Any | None:

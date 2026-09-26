@@ -167,6 +167,96 @@ async def test_expired_lease_is_stolen_and_fences_old_holder(db, storage):
         await lease.release()
 
 
+async def test_attach_returns_the_holders_own_handle(db):
+    lease = await db.lease("state/run-1", ttl=60, holder="w1", state_fn=lambda s: {"n": 1})
+
+    same = await db.attach_lease("state/run-1", holder="w1", ttl=60)
+    assert same is not None
+    assert (same.epoch, same.holder, same.state) == (lease.epoch, "w1", {"n": 1})
+    assert same.deadline_at == lease.deadline_at
+
+
+async def test_attach_writes_nothing(db, storage):
+    await db.lease("state/run-1", ttl=60, holder="w1")
+    before = storage.get_object_sync("state/run-1")
+
+    assert await db.attach_lease("state/run-1", holder="w1", ttl=60) is not None
+
+    after = storage.get_object_sync("state/run-1")
+    assert after.etag == before.etag
+    assert after.data == before.data
+
+
+async def test_two_handles_on_one_period_do_not_fence_each_other(db):
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+    attached = await db.attach_lease("state/run-1", holder="w1", ttl=60)
+
+    # Each write moves the etag the other one cached; identity is
+    # (key, epoch, holder), so both absorb and continue.
+    await attached.update_state(lambda s: {"from": "attached"})
+    await lease.update_state(lambda s: {**(s or {}), "from": "acquirer"})
+    await attached.renew()
+
+    assert lease.epoch == attached.epoch
+    assert lease.state == {"from": "acquirer"}
+
+
+async def test_attach_refuses_a_lease_that_is_not_yours(db):
+    await db.lease("state/run-1", ttl=60, holder="w1")
+    assert await db.attach_lease("state/run-1", holder="w2", ttl=60) is None
+
+
+async def test_attach_refuses_absent_and_released_leases(db):
+    assert await db.attach_lease("state/run-1", holder="w1", ttl=60) is None
+
+    lease = await db.lease("state/run-1", ttl=60, holder="w1")
+    await lease.release()
+    assert await db.attach_lease("state/run-1", holder="w1", ttl=60) is None
+
+
+async def test_attach_refuses_an_expired_lease(db, storage):
+    await db.lease("state/run-1", ttl=60, holder="w1")
+    _expire(storage, "state/run-1")
+
+    # Refused on purpose: a sweeper may already have concluded w1 dead, so
+    # ownership is resumed with an acquisition that takes a fresh epoch.
+    assert await db.attach_lease("state/run-1", holder="w1", ttl=60) is None
+    resumed = await db.lease("state/run-1", ttl=60, holder="w1")
+    assert resumed.epoch == 2
+
+
+async def test_attach_after_a_steal_gives_the_thief_only(db, storage):
+    await db.lease("state/run-1", ttl=60, holder="w1")
+    _expire(storage, "state/run-1")
+    thief = await db.lease("state/run-1", ttl=60, holder="w2")
+
+    assert await db.attach_lease("state/run-1", holder="w1", ttl=60) is None
+    stolen = await db.attach_lease("state/run-1", holder="w2", ttl=60)
+    assert stolen is not None
+    assert stolen.epoch == thief.epoch == 2
+
+
+async def test_an_attached_handle_is_fenced_by_a_steal(db, storage):
+    await db.lease("state/run-1", ttl=60, holder="w1")
+    attached = await db.attach_lease("state/run-1", holder="w1", ttl=60)
+
+    _expire(storage, "state/run-1")
+    assert await db.lease("state/run-1", ttl=60, holder="w2") is not None
+
+    with pytest.raises(LeaseLost):
+        await attached.renew()
+
+
+def test_attach_sync_facade_and_argument_checks(db):
+    db.lease_sync("state/run-1", ttl=60, holder="w1")
+    assert db.attach_lease_sync("state/run-1", holder="w1", ttl=60) is not None
+
+    with pytest.raises(ValueError):
+        db.attach_lease_sync("state/run-1", holder="w1", ttl=0)
+    with pytest.raises(ValueError):
+        db.attach_lease_sync("state/run-1", holder="", ttl=60)
+
+
 async def test_expired_lease_not_stolen_when_disabled(db, storage):
     assert await db.lease("state/run-1", ttl=60, holder="w1") is not None
     _expire(storage, "state/run-1")
