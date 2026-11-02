@@ -8,6 +8,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before
 
 ## [Unreleased]
 
+### Added
+
+- `AzureStorageConfig.credential` and `AzureBlobStorage(credential=...)`:
+  the credential of `account_url`, e.g. a service principal or a given
+  managed identity. `DefaultAzureCredential` remains the default. A
+  credential with `connection_string` is refused.
+
 ## [0.4.1] - 2026-09-26
 
 First release published to PyPI (`pip install cairndb`).

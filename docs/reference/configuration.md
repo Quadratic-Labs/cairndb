@@ -48,10 +48,12 @@ Credentials come from boto3's default chain.
 | `container` | str | *required* | blob container name |
 | `prefix` | str | `""` | blob name prefix |
 | `connection_string` | str \| None | `None` | full connection string |
-| `account_url` | str \| None | `None` | `https://<account>.blob.core.windows.net`, authenticated with `DefaultAzureCredential` |
+| `account_url` | str \| None | `None` | `https://<account>.blob.core.windows.net`, authenticated with `credential` |
+| `credential` | TokenCredential \| None | `None` | credential of `account_url`; `DefaultAzureCredential` when `None`. Set in code only |
 
 Exactly one of `connection_string` and `account_url` is required. If
-both are given, `connection_string` wins.
+both are given, `connection_string` wins. `credential` goes with
+`account_url` only: with `connection_string`, the config is refused.
 
 ## Environment variables
 

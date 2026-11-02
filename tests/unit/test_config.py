@@ -49,6 +49,24 @@ class TestStorageConfig:
         with pytest.raises(ValueError, match="connection_string"):
             AzureStorageConfig(container="c")
 
+    def test_azure_credential_goes_with_account_url(self):
+        with pytest.raises(ValueError, match="credential"):
+            AzureStorageConfig(container="c", connection_string="cs", credential=object())
+
+    def test_azure_credential_reaches_the_storage(self):
+        from unittest.mock import patch
+
+        credential = object()
+        config = AzureStorageConfig(
+            container="c", account_url="https://acct.blob.core.windows.net", credential=credential
+        )
+        with patch("cairndb.storage.azure.BlobServiceClient") as service_cls:
+            config.create_storage()
+        service_cls.assert_called_once_with(
+            account_url="https://acct.blob.core.windows.net", credential=credential
+        )
+        assert "credential" not in repr(config)
+
     def test_gcs_requires_bucket(self):
         with pytest.raises(ValueError, match="bucket"):
             GCSStorageConfig(bucket="")
