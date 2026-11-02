@@ -1,6 +1,7 @@
 """Azure Blob Storage backend."""
 
 import asyncio
+from typing import Any
 
 import structlog
 
@@ -40,8 +41,9 @@ class AzureBlobStorage(BlobStorage):
     Put-if-absent uses `upload_blob(..., overwrite=False)`, which sets the
     `If-None-Match: *` condition and raises ResourceExistsError on conflict.
 
-    Provide either *connection_string* (simplest) or *account_url*.  When only
-    account_url is given, ``DefaultAzureCredential`` is used for authentication.
+    Provide either *connection_string* (simplest) or *account_url*. With
+    account_url, *credential* authenticates the requests, or
+    ``DefaultAzureCredential`` when it is not given.
     """
 
     def __init__(
@@ -50,6 +52,7 @@ class AzureBlobStorage(BlobStorage):
         prefix: str = "",
         connection_string: str | None = None,
         account_url: str | None = None,
+        credential: Any = None,
     ):
         """
         Initialize Azure Blob Storage.
@@ -58,7 +61,10 @@ class AzureBlobStorage(BlobStorage):
             container: Azure container name
             prefix: Blob name prefix
             connection_string: Full Azure Storage connection string
-            account_url: Storage account URL (uses DefaultAzureCredential)
+            account_url: Storage account URL
+            credential: Credential of the requests to account_url, e.g. a
+                ``ClientSecretCredential`` or a ``ManagedIdentityCredential``.
+                Default: ``DefaultAzureCredential``.
         """
         if not connection_string and not account_url:
             raise StorageError(
@@ -67,14 +73,19 @@ class AzureBlobStorage(BlobStorage):
 
         self._prefix = prefix.rstrip("/")
 
+        if connection_string and credential is not None:
+            raise StorageError(
+                "Azure storage: 'credential' goes with 'account_url', not 'connection_string'"
+            )
+
         if connection_string:
             self._service_client = BlobServiceClient.from_connection_string(connection_string)
         else:
-            from azure.identity import DefaultAzureCredential
+            if credential is None:
+                from azure.identity import DefaultAzureCredential
 
-            self._service_client = BlobServiceClient(
-                account_url=account_url, credential=DefaultAzureCredential()
-            )
+                credential = DefaultAzureCredential()
+            self._service_client = BlobServiceClient(account_url=account_url, credential=credential)
 
         self._container_client = self._service_client.get_container_client(container)
 

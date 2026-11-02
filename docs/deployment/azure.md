@@ -126,6 +126,20 @@ a managed identity in Azure, and your `az login` session on a
 workstation. `connection_string` also works, but it embeds the account
 key.
 
+An application that manages its own identity passes its credential
+instead, in code:
+
+```python
+from azure.identity import ClientSecretCredential
+from cairndb.storage.config import AzureStorageConfig
+
+storage = AzureStorageConfig(
+    container="cairndb-data",
+    account_url="https://<account>.blob.core.windows.net",
+    credential=ClientSecretCredential(tenant_id, client_id, client_secret),
+).create_storage()
+```
+
 ## Testing against real Azure
 
 The repository has a live integration suite that runs against an

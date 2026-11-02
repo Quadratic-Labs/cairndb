@@ -16,7 +16,7 @@ variables with :meth:`StorageConfig.from_env`.
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from cairndb.core.exceptions import ConfigurationError
@@ -162,13 +162,20 @@ class AzureStorageConfig(StorageConfig):
     container: str
     prefix: str = ""
     connection_string: str | None = None
-    account_url: str | None = None  # uses DefaultAzureCredential
+    account_url: str | None = None
+    # A TokenCredential for account_url; DefaultAzureCredential when None.
+    # Set in code only: from_env and from_dict leave it None.
+    credential: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.container:
             raise ValueError("azure storage requires 'container' to be set")
         if not self.connection_string and not self.account_url:
             raise ValueError("azure storage requires 'connection_string' or 'account_url'")
+        if self.connection_string and self.credential is not None:
+            raise ValueError(
+                "azure storage: 'credential' goes with 'account_url', not 'connection_string'"
+            )
 
     def create_storage(self) -> BlobStorage:
         from cairndb.storage.azure import AzureBlobStorage
@@ -178,6 +185,7 @@ class AzureStorageConfig(StorageConfig):
             prefix=self.prefix,
             connection_string=self.connection_string,
             account_url=self.account_url,
+            credential=self.credential,
         )
 
 

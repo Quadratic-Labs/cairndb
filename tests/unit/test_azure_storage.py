@@ -70,6 +70,31 @@ class TestInit:
                 credential=cred_cls.return_value,
             )
 
+    def test_account_url_uses_the_given_credential(self):
+        with (
+            patch("cairndb.storage.azure.BlobServiceClient") as service_cls,
+            patch("azure.identity.DefaultAzureCredential") as cred_cls,
+        ):
+            from cairndb.storage.azure import AzureBlobStorage
+
+            credential = object()
+            AzureBlobStorage(
+                container="c",
+                account_url="https://acct.blob.core.windows.net",
+                credential=credential,
+            )
+            service_cls.assert_called_once_with(
+                account_url="https://acct.blob.core.windows.net", credential=credential
+            )
+            cred_cls.assert_not_called()
+
+    def test_a_credential_with_a_connection_string_is_refused(self):
+        with patch("cairndb.storage.azure.BlobServiceClient"):
+            from cairndb.storage.azure import AzureBlobStorage
+
+            with pytest.raises(StorageError, match="credential"):
+                AzureBlobStorage(container="c", connection_string="cs", credential=object())
+
     @pytest.mark.asyncio
     async def test_default_prefix_is_empty(self, mock_container):
         from cairndb.storage.azure import AzureBlobStorage
