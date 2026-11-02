@@ -8,6 +8,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-02
+
 ### Added
 
 - `AzureStorageConfig.credential` and `AzureBlobStorage(credential=...)`:
@@ -81,6 +83,7 @@ bucket's conditional writes arbitrate concurrency.
   opt-in live Azure suite, and mutation testing (the codebase is
   mutant-clean).
 
-[Unreleased]: https://github.com/Quadratic-Labs/cairndb/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/Quadratic-Labs/cairndb/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Quadratic-Labs/cairndb/releases/tag/v0.5.0
 [0.4.1]: https://github.com/Quadratic-Labs/cairndb/releases/tag/v0.4.1
 [0.4.0]: https://github.com/Quadratic-Labs/cairndb/releases/tag/v0.4.0
